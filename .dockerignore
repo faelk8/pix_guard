@@ -6,6 +6,10 @@
 !src/**
 !tests/
 !tests/**
+!docs/
+docs/**
+!docs/Dockerfile
+!docs/requirements.txt
 **/__pycache__/
 **/*.pyc
 **/.pytest_cache/

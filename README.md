@@ -60,3 +60,8 @@ O planejamento e o histórico de validação estão em [docs/plan.md](docs/plan.
 em [docs/adr/](docs/adr/), e as notas de estudo em [docs/learning-notes.md](docs/learning-notes.md). O código é
 publicado por entregas vinculadas a Issues e Pull Requests; consulte o estado de cada fase antes de usar os
 serviços descritos no plano.
+
+## Portal de documentação
+
+A documentação didática da arquitetura, dos comandos e dos limites de cada fase está em `docs/source/`. Construa
+o portal Sphinx dentro de um container com `make docs-build`; os arquivos HTML são gerados em `docs/_build/html/`.

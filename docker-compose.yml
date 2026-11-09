@@ -105,6 +105,18 @@ services:
       app:
         condition: service_healthy
 
+  docs:
+    profiles: ["docs"]
+    image: pixguard-docs:local
+    build:
+      context: .
+      dockerfile: docs/Dockerfile
+    working_dir: /workspace/docs
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    volumes:
+      - ./docs:/workspace/docs
+    command: ["sphinx-build", "-E", "-a", "-W", "--keep-going", "-b", "html", "source", "_build/html"]
+
 volumes:
   pixguard_data:
   kafka_data:

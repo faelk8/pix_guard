@@ -1,4 +1,4 @@
-.PHONY: build up down test config storage-check
+.PHONY: build up down test config storage-check docs-build
 
 build:
 	docker compose build
@@ -17,3 +17,6 @@ config:
 
 storage-check:
 	docker compose run --rm --no-deps app pixguard check-storage
+
+docs-build:
+	docker compose --profile docs run --rm --build docs

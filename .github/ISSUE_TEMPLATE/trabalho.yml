@@ -1,0 +1,55 @@
+name: Trabalho planejado
+description: Planejamento, funcionalidade, melhoria, correção, teste, infraestrutura ou documentação
+title: "[ATI-001] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: "Ajuste o título para [ATI-001], [BUG-001], [DOC-001] ou outro tipo adequado. Consulte todas as Issues, inclusive fechadas, e use o próximo número do prefixo; o número do título é apenas um exemplo."
+  - type: dropdown
+    id: tipo
+    attributes:
+      label: Tipo
+      options:
+        - planejamento
+        - funcionalidade
+        - melhoria
+        - correção
+        - infraestrutura
+        - teste
+        - documentação
+    validations:
+      required: true
+  - type: textarea
+    id: motivo
+    attributes:
+      label: Contexto e motivo
+      description: Explique o problema, a necessidade e por que o trabalho deve existir.
+    validations:
+      required: true
+  - type: textarea
+    id: resultado
+    attributes:
+      label: Resultado esperado
+      description: Descreva comportamento observável e limites de escopo.
+    validations:
+      required: true
+  - type: textarea
+    id: aceite
+    attributes:
+      label: Critérios de aceitação
+      value: |
+        - [ ] Critério verificável
+        - [ ] Testes e documentação atualizados
+    validations:
+      required: true
+  - type: textarea
+    id: decisoes
+    attributes:
+      label: Decisões, riscos e referências
+      description: Relacione ADRs, contratos, dependências, riscos e outras Issues.
+  - type: textarea
+    id: dependencias
+    attributes:
+      label: Ordem e dependências
+      description: Informe IDs das tarefas e #Issues que precisam estar concluídas antes desta atividade; use "nenhuma" quando independente.

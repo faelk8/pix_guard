@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "pixguard-ai"
+version = "0.1.0"
+description = "Local, containerized study of synthetic payment events."
+authors = ["PixGuard AI contributors"]
+packages = [{ include = "pixguard_ai", from = "src" }]
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.13"
+streamlit = "1.50.0"
+
+[tool.poetry.group.test.dependencies]
+pytest = "8.4.2"
+
+[tool.poetry.scripts]
+pixguard = "pixguard_ai.interfaces.cli:main"
+
+[build-system]
+requires = ["poetry-core==2.2.1"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+cache_dir = "/tmp/pixguard-pytest-cache"

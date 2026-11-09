@@ -225,3 +225,7 @@ specs/
 
 # Rascunhos editoriais locais; não sincronizar com o repositório.
 linkedin/
+
+# Instruções privadas e prompt legado do Codex; não publicar.
+AGENTS.md
+01_PIXGUARD_AI_PROMPT_CODEX.md

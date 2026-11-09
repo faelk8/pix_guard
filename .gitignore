@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Instruções e perfis locais de agentes; não publicar no GitHub.
+.agents/
+specs/agents/
+
+# Rascunhos editoriais locais; permanecem fora do GitHub até revisão/autorização.
+linkedin/

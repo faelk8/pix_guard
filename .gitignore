@@ -221,7 +221,7 @@ __marimo__/
 
 # Instruções e perfis locais de agentes; não publicar no GitHub.
 .agents/
-specs/agents/
+specs/
 
-# Rascunhos editoriais locais; permanecem fora do GitHub até revisão/autorização.
+# Rascunhos editoriais locais; não sincronizar com o repositório.
 linkedin/

@@ -63,7 +63,10 @@ def test_invalid_json_is_explicit(tmp_path: Path, payload: bytes) -> None:
     [("count_written", True), ("count_requested", 0), ("count_written", 6),
      ("progress", 0.1), ("progress", float("nan")), ("elapsed_seconds", float("inf")),
      ("label_is_synthetic", False), ("manifest_version", 2), ("status", "unknown"),
-     ("updated_at", "yesterday"), ("started_at", "2026-01-01T00:00:00"),
+     ("updated_at", "yesterday"), ("updated_at", "2026-01-01T03:00:00+03:00"),
+     ("started_at", "2026-01-01T00:00:00"),
+     ("started_at", "2026-01-01T03:00:00+03:00"),
+     ("finished_at", "2026-01-01T03:00:00+03:00"),
      ("scenario_counts", {"normal": 9}), ("error", []), ("sha256", "bad")],
 )
 def test_invalid_contract_has_no_metrics(

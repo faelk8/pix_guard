@@ -1,7 +1,7 @@
 """Display persisted generation snapshots without loading the event dataset."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import math
 import os
@@ -72,7 +72,7 @@ def _validate_manifest(value: object) -> GenerationManifest:
         stamp = value[key]
         if key == "finished_at" and stamp is None and value["status"] == "running":
             continue
-        if not isinstance(stamp, str) or datetime.fromisoformat(stamp).utcoffset() is None:
+        if not isinstance(stamp, str) or datetime.fromisoformat(stamp).utcoffset() != timedelta(0):
             raise ValueError("Timestamp do manifesto inválido.")
     counts = value["scenario_counts"]
     if not isinstance(counts, dict) or any(

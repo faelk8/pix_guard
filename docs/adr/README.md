@@ -19,3 +19,10 @@ As decisões arquiteturais do projeto são registradas aqui para preservar conte
 - Relacione a Issue e os commits responsáveis pela decisão.
 
 Copie `0000-modelo.md`, escolha o próximo número e preencha todas as seções.
+
+## Decisões
+
+- [0001 — Armazenamento em volume Docker](0001-armazenamento-em-volume-docker.md)
+- [0002 — Execução em containers](0002-execucao-em-containers.md)
+- [0003 — Dados sintéticos reproduzíveis](0003-dados-sinteticos-reproduziveis.md)
+- [0004 — Execuções locais de Spark SDP isoladas por `run_id`](0004-spark-sdp-local-runs.md) — proposta pendente de revisão.

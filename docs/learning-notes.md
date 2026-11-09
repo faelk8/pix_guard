@@ -40,13 +40,8 @@ planejada para operar com dados sintéticos e offline.
 - A FASE 0 pode avaliar disponibilidade e riscos sem puxar dados nem iniciar serviços.
 - A prova de SDP exige execução real com fixture; um dry-run isolado não é evidência de dados persistidos.
 
-### Evidências da FASE 1
-
-A geração padrão produziu 100.000 eventos dentro do Docker; duas execuções com a mesma seed produziram o mesmo
-SHA-256. Os 100 testes da suíte passaram, o volume local persistiu os arquivos e o dashboard mostrou o manifesto
-real de progresso. Kafka está disponível como serviço, mas ainda não recebe os eventos nesta fase.
-
 ### Próximo experimento
 
-Na FASE 2, publicar eventos no Kafka e estudar entrega repetida, atraso, replay e idempotência. Depois, medir como
-essas condições afetam a gravação e a visualização, sem presumir garantias que ainda não foram testadas.
+Na FASE 1, gerar 100.000 eventos no container, repetir a geração com a mesma seed e conferir se o resultado é
+idêntico. Validar o contrato, a persistência no volume Docker local e a visualização do progresso antes de seguir
+para a integração com Kafka.

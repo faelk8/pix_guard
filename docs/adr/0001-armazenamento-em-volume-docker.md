@@ -31,8 +31,8 @@ usar MinIO nem depender de um bucket S3 nesta versão.
 
 ## Validação
 
-Na FASE 1, a aplicação gravou eventos no volume e o dashboard leu o manifesto. Testes confirmaram persistência
-após reinício dos serviços. O volume só é removido quando solicitado explicitamente.
+Na FASE 1, verificar gravação pela aplicação, leitura por outro container e persistência após reinício dos
+serviços. A remoção do volume deve exigir uma ação explícita.
 
 ## Relações
 

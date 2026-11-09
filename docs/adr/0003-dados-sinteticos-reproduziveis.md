@@ -32,8 +32,8 @@ gerar ou testar o conjunto padrão.
 
 ## Validação
 
-Na FASE 1, a geração padrão produziu 100.000 eventos. Duas execuções com a mesma seed tiveram o mesmo SHA-256;
-os testes confirmaram que rótulos ficam separados dos atributos e que dados pessoais não fazem parte do contrato.
+Na FASE 1, conferir a contagem padrão, comparar duas execuções com a mesma seed e testar a separação entre
+atributos e rótulos. A revisão do contrato deve confirmar que campos com dados pessoais são rejeitados.
 
 ## Relações
 

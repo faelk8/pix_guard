@@ -33,8 +33,8 @@ cliente do dashboard local.
 
 ## Validação
 
-Na FASE 1, `docker compose config --quiet` validou a configuração, 100 testes passaram no container da
-aplicação e o dashboard respondeu localmente.
+Na FASE 1, validar o Compose, executar a suíte de testes no container da aplicação e conferir o acesso local ao
+dashboard.
 
 ## Relações
 

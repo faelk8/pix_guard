@@ -1,6 +1,6 @@
 # Plano do PixGuard AI
 
-**Estado:** FASE 1 implementada e validada localmente. As entregas são publicadas por fase, em Pull Requests vinculadas às Issues correspondentes.
+**Estado:** FASE 0 concluída: objetivos, arquitetura, decisões e roteiro de implementação definidos.
 
 ## Objetivo e escopo
 
@@ -18,12 +18,12 @@ podem contextualizar o projeto em gráficos separados.
 
 | Existe | Falta | Como comprovar |
 |---|---|---|
-| Repositório público `faelk8/pix_guard` | publicar cada entrega em uma PR com escopo e validação claros | histórico de Issues e PRs |
-| FASE 0 documentada e FASE 1 validada localmente; Issues #1–#4 criadas | fases de processamento e análise posteriores | plano, relatórios de validação e Issues correspondentes |
-| Aplicação Python 3.12.12 em containers | compatibilidade de Spark com a imagem de execução | testar versões de Java e Spark dentro do container na FASE 3 |
-| Estatísticas agregadas do Banco Central são uma fonte opcional futura | verificar utilidade, fonte, licença e formato antes de qualquer uso | não participam do gerador nem dos testes atuais |
-| Docker oferece volumes locais persistentes | processamento Spark/Kafka das fases seguintes | persistência e leitura entre containers foram validadas na FASE 1 |
-| Documentação oficial SDP atual | versão/ambiente instalado e pipeline real | instalação isolada futura, `dry-run` e `run` com fixture |
+| Repositório público `faelk8/pix_guard` | desenvolver as fases do roteiro | entregas rastreadas por Issues e Pull Requests |
+| Arquitetura e requisitos da FASE 0 documentados; Issues #1–#4 organizam o primeiro ciclo | implementação da infraestrutura e do gerador | plano, ADRs e Issue #4 |
+| Python, Kafka e Spark como tecnologias planejadas | fixar e validar as versões dentro dos containers | testes de compatibilidade durante as fases de implementação |
+| Estatísticas agregadas do Banco Central como fonte opcional futura | verificar utilidade, fonte, licença e formato antes de qualquer uso | não são requisito para o fluxo sintético offline |
+| Volume Docker local como armazenamento inicial | validar compartilhamento e persistência entre serviços | critério da Issue #1 |
+| Spark Declarative Pipelines como alternativa para processamento | executar uma prova com fixture antes de adotá-lo | critério da fase de processamento |
 
 ## Arquitetura proposta
 
@@ -41,36 +41,37 @@ flowchart LR
   BCB[BCB agregado] --> CTX[Contexto separado]
 ```
 
-`docker-compose.yml` define `kafka`, `app`, `dashboard` e `pipeline`. O serviço `pipeline` está reservado para
-fases posteriores. Um volume Docker nomeado compartilhado em `/data/pixguard` guarda os eventos e manifestos;
-não há serviço S3 adicional. Na FASE 1, o gerador grava os 100 mil eventos no volume, sem mantê-los todos em
-memória. O envio ao Kafka e o processamento Spark ainda serão testados em fases próprias, sem presumir garantia
-de entrega de ponta a ponta.
+O `docker-compose.yml` deverá reunir `kafka`, `app`, `dashboard` e um serviço de pipeline. O serviço de
+processamento começa reservado para uma fase posterior. Um volume Docker nomeado compartilhado em
+`/data/pixguard` guardará os eventos e resultados; não será necessário adicionar MinIO nesta versão. A primeira
+implementação deverá gerar 100 mil eventos no volume sem manter o conjunto inteiro em memória. A integração com
+Kafka e o processamento Spark serão validados em etapas próprias, sem presumir garantia de entrega de ponta a
+ponta.
 
-Dashboard progressivo: FASE 1 mostra execução/contagem do gerador; FASE 2 mostra Kafka, lag, duplicatas e erros;
-FASE 3 permite inspecionar volumes/qualidade Bronze, Silver e Gold; FASE 4 apresenta regras, features e métricas.
-O painel e o processamento rodam em containers; navegador no host é apenas cliente visual.
+Dashboard progressivo: a primeira tela mostrará execução e contagem do gerador; depois poderá apresentar Kafka,
+mensagens atrasadas ou repetidas, qualidade Bronze/Silver/Gold, regras e métricas. O painel e o processamento
+rodarão em containers; o navegador no host será apenas o cliente visual.
 
-### Primeira tela (FASE 1 implementada)
+### Esboço da primeira tela
 
 ```text
 ┌ PixGuard AI · DEMONSTRAÇÃO · DADOS 100% SINTÉTICOS ─────────────────┐
-│ Gerador: concluído │ Volume: disponível │ Dados: sintéticos │ Atualizar │
+│ Gerador: aguardando │ Volume: local │ Dados: sintéticos │ Atualizar │
 ├────────────────────┬───────────────────┬────────────────────────────┤
-│ Eventos produzidos │ Eventos solicitados │ Volume gravado              │
-│ 100.000            │ 100.000             │ 53.33 MiB                   │
+│ Eventos produzidos │ Eventos solicitados │ Estado                     │
+│ 0                  │ 100.000             │ aguardando                 │
 ├────────────────────────────────────────────────────────────────────┤
-│ Progresso persistido: 100% │ horários UTC │ duração │ erro         │
+│ Progresso: 0% │ última atualização: — │ duração: — │ erro: —      │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-O dashboard lê o manifesto compartilhado e apresenta os estados concluído, em execução, falhou, interrompido,
-vazio e inválido. Gráficos de streaming, camadas e alertas entram após as fontes desses dados existirem e
-passarem pelos testes da fase correspondente.
+O dashboard deverá ler o estado persistido pelo gerador e distinguir uma execução concluída de estados vazios ou
+com erro. Gráficos de streaming, camadas e alertas só entram depois que as respectivas fontes existirem e forem
+validadas.
 
 ## Contrato e segurança de dados
 
-Contrato `payment_event_v1`: `event_id` UUID; hashes de conta/dispositivo sintéticos; merchant; valor decimal BRL;
+Contrato proposto `payment_event_v1`: `event_id` UUID; hashes fictícios de conta/dispositivo; merchant; valor decimal BRL;
 `event_time`/`ingested_at` UTC; região fictícia; canal, status, schema_version, `label_is_synthetic` e cenário.
 Proibidos CPF, nome, conta e chave Pix reais. `ground_truth` não entra nas features de predição. Bronze preserva
 envelope e metadados; Silver valida, normaliza, deduplica e põe inválidos em quarentena; Gold agrega por conta e
@@ -89,11 +90,11 @@ janela e explica cada alerta.
 
 | Componente | Estado/hipótese | Próxima prova |
 |---|---|---|
-| Python | 3.12.12 na imagem da aplicação | verificar compatibilidade com Spark dentro do container na FASE 3 |
-| Java e Spark SDP | não fazem parte da imagem atual do pipeline | testar combinações compatíveis antes da integração |
-| Kafka | `apache/kafka:4.4.0` em serviço Compose saudável | conectar o gerador e validar entrega, replay e atraso na FASE 2 |
-| Filesystem Docker | volume nomeado em `/data/pixguard` | compartilhamento e persistência entre containers validados na FASE 1 |
-| Docker Compose | Kafka, aplicação, pipeline reservado e dashboard | configuração validada com `docker compose config --quiet` |
+| Python | versão a fixar na imagem da aplicação | escolher uma versão compatível com as ferramentas de processamento |
+| Java e Spark SDP | candidatos para a fase de processamento | testar combinações compatíveis dentro do container |
+| Kafka | serviço planejado no Compose | selecionar a imagem e testar entrega, replay e atraso |
+| Filesystem Docker | volume nomeado em `/data/pixguard` | validar compartilhamento e persistência entre containers |
+| Docker Compose | Kafka, aplicação, pipeline e dashboard | validar a configuração e os healthchecks |
 
 ## Orçamento de recursos
 
@@ -103,10 +104,9 @@ medir o consumo e ajustar esses limites antes de aumentar o volume de dados.
 
 ## Experiência visual
 
-O dashboard da FASE 1 mostra o progresso real do gerador, total produzido e solicitado, volume, duração e estado;
-um aviso identifica os dados como sintéticos. As próximas telas poderão apresentar saúde do streaming, qualidade
-das camadas e alertas quando essas fontes existirem. A interface não inventa métricas e trata estados vazios ou
-erros de leitura explicitamente.
+A primeira tela deverá mostrar progresso real do gerador, totais, estado e um aviso permanente de dados
+sintéticos. Telas seguintes poderão apresentar saúde do streaming, qualidade das camadas e alertas quando essas
+fontes existirem. A interface não deverá inventar métricas e deverá tratar estados vazios ou erros de leitura.
 
 ## Riscos e decisões
 
@@ -135,7 +135,7 @@ documentação são organizadas em Pull Requests vinculadas às Issues e validad
 
 1. FASE 0: auditoria e plano local (concluída).
 2. Fundamental: consolidar requisitos/arquitetura (`PLAN-001`, Issue #4; concluída).
-3. FASE 1: Compose base (`INFRA-001`, Issue #1), contrato/gerador 100k (`GEN-001`, Issue #2) e dashboard (`UI-001`, Issue #3); concluída e validada localmente.
+3. FASE 1: Compose base (`INFRA-001`, Issue #1), contrato/gerador de 100 mil eventos (`GEN-001`, Issue #2) e dashboard (`UI-001`, Issue #3).
 4. FASE 2: Kafka, filesystem compartilhado, replay, idempotência, atraso/quarentena e painel de streaming.
 5. FASE 3: prova SDP no container com Bronze/Silver/Gold no volume local, consulta visual e execução reproduzível.
 6. FASE 4: baseline, métricas, painel visual completo e comparação ML apenas se justificada.
@@ -165,18 +165,8 @@ conectam as etapas e incluem somente resultados já verificados.
 4. SDP: declarar datasets/fluxos, grafo, tabelas e diferença entre dry-run e execução real.
 5. Qualidade, quarentena, métricas e risco de leakage em ML.
 
-## Resultado histórico da FASE 0
+## Resultado da FASE 0
 
 **PASSOU:** auditoria Git/ambiente, pesquisa de arquitetura e planejamento para Docker Compose, volume local,
-100 mil eventos sintéticos, execução containerizada, UI progressiva e validação incremental.
-
-## Resultado da FASE 1
-
-**PASSOU localmente:** infraestrutura Compose com Kafka 4.4.0 e volume compartilhado; contrato `payment_event_v1`;
-geração incremental e reproduzível de 100.000 eventos; manifesto de progresso; dashboard com aviso permanente de
-dados sintéticos. `docker compose run --rm app pytest` passou com **100 testes**; a geração real gravou 100.000
-linhas e SHA-256 `274d6a0b1543ddd9adfb881428527c0d34ba8870cf541b4254954f90caba110e`; dashboard local respondeu HTTP 200.
-Issues #1–#4 registram o planejamento e as dependências das entregas.
-
-**Continuidade:** a FASE 2 conectará o fluxo de eventos ao Kafka e medirá repetição, atraso e falhas. Cada fase
-terá critérios, validação e documentação próprios antes de avançar.
+100 mil eventos sintéticos, execução em containers, interface progressiva e validação incremental como critérios
+para as fases de implementação. A FASE 0 não executou código da aplicação.

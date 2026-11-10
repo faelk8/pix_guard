@@ -23,8 +23,12 @@ Bronze, Silver e Gold e mostra o resultado no dashboard.
 
 Docker executa os serviços em containers isolados. Docker Compose descreve como iniciá-los juntos; um volume
 Docker local mantém os arquivos disponíveis para os containers. O armazenamento da primeira versão usa esse
-volume, sem MinIO ou serviço S3 separado. A integração de streaming e o processamento com Spark serão entregues
-em fase própria. A FASE 3 ainda lê diretamente o JSONL; não recebe mensagens do Kafka.
+volume, sem MinIO ou serviço S3 separado. O processamento Spark da FASE 3 está implementado no perfil
+`pipeline`; ele lê diretamente o JSONL. A integração automática com Kafka permanece na FASE 2 planejada.
+
+A FASE 3 entrega o processamento offline em uma mudança independente; a FASE 4 mantém baseline, métricas e
+visualização em outra entrega. A FASE 2 já disponibiliza Kafka/Redpanda Console; a integração de streaming do
+gerador permanece planejada.
 
 ## Processar o lote da FASE 3
 

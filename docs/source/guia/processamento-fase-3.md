@@ -113,13 +113,18 @@ Cada execução ocupa um diretório próprio no volume `pixguard_data`:
     └── fase3-001/
         ├── manifest.json
         ├── dashboard-summary.json
+        ├── input-snapshot.jsonl # cópia usada por todas as views
         ├── checkpoints/
         └── spark-warehouse/    # tabelas Parquet Bronze, Silver, Gold e apoio
 ```
 
 O manifesto registra versão do esquema e pipeline, caminho e SHA-256 da entrada, quantidades de cada camada,
 status, horários UTC, duração, caminho de cada conjunto e reconciliação. É gravado atomicamente no fim da
-execução. O manifesto concluído só afirma sucesso depois das saídas e das contagens terem sido lidas e conferidas.
+execução. Todas as views leem a cópia `input-snapshot.jsonl`, criada em blocos de até 1 MiB antes do Spark.
+O SHA-256 é calculado durante essa cópia; o manifesto também registra `snapshot_path` e `snapshot_bytes`.
+Antes de publicar `completed`, o processo verifica novamente a cópia e o original. Se a origem for substituída
+durante o processamento, a execução recebe `failed`. Por isso, espere o processamento terminar antes de
+regenerar o mesmo arquivo. O snapshot retido ocupa espaço adicional: 55.919.188 bytes no lote medido.
 
 O `dashboard-summary.json` guarda até 20 grupos Gold para exibir uma tabela e um gráfico sem carregar o Parquet
 inteiro no app. O dashboard escolhe o manifesto válido concluído com `finished_at` UTC mais recente. Uma falha
@@ -144,9 +149,10 @@ docker compose run --rm --no-deps app pytest -q
 
 A fixture de integração cobre JSON válido, payload semanticamente igual com whitespace diferente, payload
 divergente com o mesmo ID, JSON inválido e um evento atrasado. Os testes também exercitam caminhos e locks. A
-validação executada passou com 12 testes Spark e 111 testes da app, com um teste de integração Spark ignorado na
-imagem leve (onde Spark não é instalado). O lote de 100.000 linhas levou cerca de 61 segundos por execução com
-limites Compose de 2 CPUs e 4 GiB para o pipeline; duração varia conforme a máquina.
+validação após as correções passou com 17 testes Spark e 122 testes da app, com um módulo de integração Spark
+ignorado na imagem leve (onde Spark não é instalado). As regressões verificam um inválido no mesmo ID de dois
+payloads conflitantes e a substituição atômica da origem durante/depois do SDP. Dois lotes de 100.000 linhas
+levaram 59,782 s e 60,698 s, com limites Compose de 2 CPUs e 4 GiB para o pipeline; duração varia conforme a máquina.
 
 ## Entender fases e limitações
 

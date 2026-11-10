@@ -44,13 +44,15 @@ containers. Os testes e a aplicação usam Python 3.12 na imagem do projeto.
 ## Serviço da pipeline
 
 O serviço `pipeline` está no profile Compose `pipeline`; construa-o antes da primeira execução. A CLI aceita
-`dry-run` e `process`. Os parâmetros opcionais `--input` e `--run-id` pertencem ao comando `process`; o input
+`dry-run` e `process`. Ambos aceitam `--input`; somente `process` aceita `--run-id`. O input
 padrão é `/data/pixguard/events.jsonl`. Sem `--run-id`, o comando cria um UUID aleatório. Prefira um ID curto e
 exclusivo para facilitar a inspeção, por exemplo `fase3-001`. Reutilizar um ID existente é recusado.
 
 As camadas consultáveis ficam sob `runs/<run_id>/spark-warehouse/`; `manifest.json` e `dashboard-summary.json`
 ficam no diretório da execução. O dashboard escolhe o sucesso mais recente a partir do horário UTC do manifesto;
-não há alias `latest`. Reexecuções ocupam espaço adicional e não são limpas automaticamente.
+não há alias `latest`. Cada run retém também `input-snapshot.jsonl`; todas as views usam essa cópia e
+substituir a origem antes da publicação gera falha. Reexecuções e snapshots ocupam espaço adicional e não são
+limpos automaticamente.
 
 ## Saída esperada da FASE 3
 

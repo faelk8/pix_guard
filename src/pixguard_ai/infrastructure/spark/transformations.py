@@ -49,9 +49,10 @@ def _canonical_json(raw_json: str) -> str | None:
 def _source() -> DataFrame:
     """Build a fresh reference to the input source for a declarative dataset."""
     source = spark.conf.get("spark.pixguard.input")
+    source_file = spark.conf.get("spark.pixguard.source_file", source)
     run_id = spark.conf.get("spark.pixguard.run_id")
     return (spark.read.text(source).withColumnRenamed("value", "raw_json")
-            .withColumn("run_id", F.lit(run_id)).withColumn("source_file", F.lit(source))
+            .withColumn("run_id", F.lit(run_id)).withColumn("source_file", F.lit(source_file))
             .withColumn("source_ordinal", F.monotonically_increasing_id()))
 
 
@@ -94,7 +95,7 @@ def quarantine() -> DataFrame:
                     .filter("payload_count > 1").select("event_id"))
     invalid = (classified.filter("validation_reason IS NOT NULL")
                .withColumnRenamed("validation_reason", "quarantine_reason"))
-    conflicts = (classified.join(conflict_ids, "event_id", "inner")
+    conflicts = (classified.filter("validation_reason IS NULL").join(conflict_ids, "event_id", "inner")
                  .withColumn("quarantine_reason", F.lit("conflicting_event_id_payload")))
     return invalid.unionByName(conflicts, allowMissingColumns=True)
 

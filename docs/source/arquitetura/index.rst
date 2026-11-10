@@ -30,7 +30,7 @@ Fluxo principal
        GT[ground_truth · avaliação] --> JOIN
        JOIN --> EVAL[Métricas e manifesto FASE 4]
        EVAL --> DASH
-       K[Kafka · FASE 2 planejada] --> CONSOLE[Redpanda Console]
+       K[Kafka local · broker disponível] --> CONSOLE[Redpanda Console]
        DEMO[Mensagem manual de demonstração] --> K
      end
        GEN -. publicação automática futura .-> K
@@ -43,7 +43,8 @@ visíveis no navegador.
 O arquivo ``events.jsonl`` é JSON Lines: cada linha contém um evento JSON independente. Isso permite ao Spark
 ler um conjunto grande sem carregar o arquivo inteiro para a memória do processo driver. O perfil Compose
 ``pipeline`` executa a CLI real ``spark-pipelines``; um ``dry-run`` prepara/valida o grafo declarado e ``run``
-materializa os datasets. Cada execução usa um ``run_id`` e warehouse próprios. O dashboard lê o manifesto
+materializa os datasets. Todas as views consomem a mesma cópia da entrada, retida no run; uma alteração da
+origem antes da publicação faz o processamento falhar. Cada execução usa um ``run_id`` e warehouse próprios. O dashboard lê o manifesto
 concluído mais recente e um resumo limitado, sem iniciar Spark.
 
 Bronze conserva os registros brutos; Silver valida o contrato `payment_event_v1`, guarda horários em UTC e valores

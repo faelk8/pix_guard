@@ -1,8 +1,8 @@
 # Plano do PixGuard AI
 
-**Estado:** FASE 0, FASE 1, FASE 3 e FASE 4 estão implementadas localmente e validadas em containers. FASE 2
-de streaming Kafka continua planejada; as entregas da FASE 3 e FASE 4 ainda aguardam revisão e autorização de
-publicação de Rafael.
+**Estado:** FASE 0, FASE 1 e o processamento offline da FASE 3 estão integrados e validados em containers. A FASE 2
+de streaming Kafka continua planejada. A FASE 4 está implementada e validada em containers como entrega separada,
+com baseline e métricas sintéticas.
 
 ## Objetivo e escopo
 
@@ -20,7 +20,7 @@ podem contextualizar o projeto em gráficos separados.
 
 | Existe | Falta | Como comprovar |
 |---|---|---|
-| FASE 0 de arquitetura e FASE 1 de infraestrutura, gerador, painel e Redpanda Console | entrega GitHub de FASE 3 aguarda revisão/autorização | Issues #1–#14 e relatórios locais ignorados em `specs/` |
+| FASE 0 de arquitetura e FASE 1 de infraestrutura, gerador, painel e Redpanda Console | streaming Kafka segue planejado; a FASE 3 processa o JSONL offline | Issues #1–#14 e relatórios locais ignorados em `specs/` |
 | Gerador produz 100.000 eventos sintéticos versionados em JSONL | integração automática do gerador com Kafka | teste do gerador na Issue #2; FASE 2 ainda planejada |
 | Pipeline Spark SDP 4.3.0 no perfil Compose `pipeline` | Kafka streaming e garantias de entrega | dry-run, fixture, lote 100k e segunda execução na Issue #10 |
 | Bronze, Silver, quarentena, Gold, manifesto e resumo dashboard em volume Docker | política de retenção/limpeza de execuções | outputs sob `runs/<run_id>` e leitores em container |
@@ -51,7 +51,7 @@ flowchart LR
     JOIN --> METRICS[Métricas e resumo FASE 4]
     METRICS --> DASH
   end
-  K[Kafka FASE 2 · planejada] -. ainda sem ligação .-> JSONL
+  K[Kafka local · disponível] -. streaming FASE 2 futuro .-> JSONL
   CON[Redpanda Console] --- K
 ```
 
@@ -88,11 +88,12 @@ streaming só entram depois de existir uma fonte Kafka/streaming validada.
 
 ## Contrato e segurança de dados
 
-Contrato proposto `payment_event_v1`: `event_id` UUID; hashes fictícios de conta/dispositivo; merchant; valor decimal BRL;
+Contrato implementado `payment_event_v1`: `event_id` UUID; hashes fictícios de conta/dispositivo; merchant; valor decimal BRL;
 `event_time`/`ingested_at` UTC; região fictícia; canal, status, schema_version, `label_is_synthetic` e cenário.
 Proibidos CPF, nome, conta e chave Pix reais. `ground_truth` não entra nas features de predição. Bronze preserva
-envelope e metadados; Silver valida, normaliza, deduplica e põe inválidos em quarentena; Gold agrega por conta e
-janela e explica cada alerta.
+linhas brutas e metadados; Silver valida, representa horários em UTC e dinheiro como Decimal, deduplica e
+põe inválidos e conflitos em quarentena. Gold conta eventos e soma BRL por dia UTC, comerciante, canal e status;
+não produz alertas nem usa `ground_truth` na agregação.
 
 ## Fontes e armazenamento
 
@@ -103,15 +104,15 @@ janela e explica cada alerta.
 - Armazenamento das saídas: filesystem local no volume Docker nomeado. O caminho `/data/pixguard` deve ser
   compartilhado por app, pipeline e dashboard; separar subdiretórios de entrada, Bronze/Silver/Gold e checkpoints.
 
-## Matriz preliminar de compatibilidade
+## Runtime e compatibilidade observados
 
-| Componente | Estado/hipótese | Próxima prova |
+| Componente | Configuração desta entrega | Evidência e limite |
 |---|---|---|
-| Python | versão a fixar na imagem da aplicação | escolher uma versão compatível com as ferramentas de processamento |
-| Java e Spark SDP | candidatos para a fase de processamento | testar combinações compatíveis dentro do container |
-| Kafka | serviço planejado no Compose | selecionar a imagem e testar entrega, replay e atraso |
-| Filesystem Docker | volume nomeado em `/data/pixguard` | validar compartilhamento e persistência entre containers |
-| Docker Compose | Kafka, aplicação, pipeline e dashboard | validar a configuração e os healthchecks |
+| Python | aplicação em `python:3.12.12-slim-bookworm`; pipeline em `python:3.12-slim-bookworm` | builds e testes executados em containers; a tag da pipeline não fixa patch/digest |
+| Java e Spark SDP | OpenJDK 17 e `pyspark[pipelines]==4.3.0` no lockfile | dry-run, materialização e consulta Parquet comprovados; conector Kafka ainda não validado |
+| Kafka e Redpanda Console | `apache/kafka:4.4.0` e Console `v3.14.0` no Compose | infraestrutura entregue na PR #8; publicação/consumo automáticos, replay e atraso seguem na FASE 2 |
+| Filesystem Docker | volume nomeado em `/data/pixguard` | arquivos consultados em containers novos; retenção e backup permanecem responsabilidades locais |
+| Docker Compose | serviços Kafka, Console, app, pipeline e dashboard | configuração e healthchecks validados; Spark usa perfil `pipeline` com 2 CPUs e 4 GiB |
 
 ## Orçamento de recursos
 
@@ -121,19 +122,20 @@ medir o consumo e ajustar esses limites antes de aumentar o volume de dados.
 
 ## Experiência visual
 
-A primeira tela deverá mostrar progresso real do gerador, totais, estado e um aviso permanente de dados
-sintéticos. Telas seguintes poderão apresentar saúde do streaming, qualidade das camadas e alertas quando essas
-fontes existirem. A interface não deverá inventar métricas e deverá tratar estados vazios ou erros de leitura.
+A tela mostra progresso real do gerador, totais, estado e um aviso permanente de dados sintéticos. A seção
+FASE 3 apresenta contagens reconciliadas e até vinte grupos Gold. Estados vazios, falhos e inválidos têm
+mensagens próprias. Saúde do streaming e alertas analíticos dependem de entregas posteriores.
 
 ## Riscos e decisões
 
-- Compatibilidade Spark/SDP/Kafka/conector/Java ainda não comprovada. Mitigação: protótipo offline, depois PoC.
+- Spark SDP 4.3.0, Java 17 e Python 3.12 foram comprovados no fluxo offline. A compatibilidade do conector
+  Kafka e o comportamento de streaming ainda exigem uma PoC própria da FASE 2.
 - Fontes externas podem mudar formato, licença ou disponibilidade. Mitigação: manter BCB opcional e verificar as
   condições antes de qualquer integração.
 - Volume compartilhado é local ao Docker host e precisa de espaço, permissões e backup explícitos; não é storage
   distribuído nem ambiente de alta disponibilidade. Isso é aceitável para o laboratório local.
-- Rótulos artificiais podem produzir métricas enganadoras. Mitigação: seed, split temporal, congelamento do teste
-  e aviso explícito de que métricas descrevem o simulador.
+- Rótulos artificiais podem produzir métricas enganadoras. Mitigação: seed e protocolo de avaliação
+  justificado para a hipótese, dados congelados e aviso de que métricas descrevem o simulador.
 - Garantias de entrega variam com source, checkpoint e sink. Mitigação: testar replay, explicar limites e evitar
   afirmação ampla de exactly-once.
 - Como o repositório é público, revisar cada entrega para manter segredos, dados reais e artefatos locais fora
@@ -141,8 +143,8 @@ fontes existirem. A interface não deverá inventar métricas e deverá tratar e
 
 ADRs registrados incluem armazenamento em volume Docker local, execução em containers, dados sintéticos
 reproduzíveis e execução Spark por `run_id`. A ADR 0005 da baseline permanece proposta; a implementação dos
-defaults didáticos não equivale a aprovação de política. Streaming e qualquer hipótese de modelo continuam
-pendentes.
+defaults didáticos não equivale a aprovação de política. A decisão de quarentenar todos os IDs conflitantes foi
+confirmada por Rafael. Streaming, checkpoints e qualquer hipótese de modelo exigem decisões e validações próprias.
 
 ## Backlog por fases
 
@@ -154,11 +156,10 @@ documentação são organizadas em Pull Requests vinculadas às Issues e validad
 1. FASE 0: auditoria e plano local (concluída).
 2. Fundamental: consolidar requisitos/arquitetura (`PLAN-001`, Issue #4; concluída).
 3. FASE 1: Compose base (`INFRA-001`, Issue #1), contrato/gerador de 100 mil eventos (`GEN-001`, Issue #2), dashboard (`UI-001`, Issue #3) e Redpanda Console para inspeção visual do broker (`INFRA-002`, Issue #6).
-4. FASE 2: Kafka, filesystem compartilhado, replay, idempotência, atraso/quarentena e painel de streaming.
-5. FASE 3: prova SDP no container com Bronze/Silver/Gold no volume local, consulta visual e execução reproduzível.
+4. FASE 2: integrar publicação/consumo Kafka e estudar replay, idempotência, atraso/quarentena e painel de streaming; broker e Console já existem na infraestrutura da PR #8.
+5. FASE 3: processamento SDP offline, Bronze/Silver/Gold, consulta visual e execução reproduzível.
 6. FASE 4: baseline fixa, avaliação, painel e documentação (`RULE-001` #16, `ANALYSIS-001` #17,
-   `UI-003` #18 e `DOCS-003` #19). Implementação local concluída, aguardando revisão/autorização de publicação;
-   o artigo `ARTICLE-002` #20 é preparado localmente.
+   `UI-003` #18 e `DOCS-003` #19); o artigo `ARTICLE-002` #20 é preparado localmente. Comparação ML somente se justificada.
 7. FASE 5: hardening, execução E2E totalmente em Docker, README/runbook e série editorial final.
 
 Cada fase terá Issue, critérios, validação executada em containers, evidências e um artigo próprio. Os artigos
@@ -195,16 +196,22 @@ A FASE 3 transforma o JSONL sintético em arquivos Parquet locais:
   com payload divergente à quarentena. Rafael confirmou a quarentena integral dos conflitos.
 - **Gold** soma BRL como `Decimal` e conta eventos por dia UTC, comerciante, canal e status. A coluna
   `ground_truth` não é usada na agregação.
-- **Manifesto** registra `run_id`, checksum da entrada, versões, contagens, reconciliação e caminhos. Só é
-  publicado como concluído depois de todas as camadas; cada execução tem warehouse independente.
+- **Entrada congelada** é uma cópia incremental de até 1 MiB por bloco, retida em `input-snapshot.jsonl` no run.
+  Todas as views leem essa cópia. Alterar o arquivo original durante o processamento impede publicar `completed`.
+- **Manifesto** registra `run_id`, SHA-256 da cópia consumida, caminho original, snapshot, versões, contagens,
+  reconciliação e caminhos. Só é publicado como concluído após conferir a cópia e a origem; cada execução tem
+  warehouse independente.
 - **Dashboard** lê a última execução concluída válida, seu manifesto e um resumo de até 20 grupos; erro posterior
   é um aviso e não substitui resultados concluídos.
 
 Na validação com a seed padrão, o gerador escreveu 100.000 registros (55.919.188 bytes). Dois processamentos
 em `run_id` separados tiveram Bronze 100.000, Silver 100.000, duplicatas removidas 0, quarentena 0 e Gold 3.269.
-Uma comparação em outro container encontrou zero diferenças entre os Gold. A soma BRL observada foi
+Uma comparação em outro container encontrou zero diferenças entre Bronze e Silver (desconsiderando `run_id`) e Gold. A soma BRL observada foi
 `245449133.57`. Uma fixture adicional cobriu payload equivalente com whitespace distinto, conflito, JSON inválido
-e evento atrasado. Esses números são resultados reproduzíveis do simulador, não evidência antifraude.
+e evento atrasado. Regressões adicionais conferem que um inválido no mesmo ID de dois payloads conflitantes
+entra uma única vez na quarentena e que substituir a origem durante/depois do SDP produz `failed`. A validação
+da correção passou com 17 testes da pipeline e 122 da app; dois lotes de 100.000 levaram 59,782 s e 60,698 s.
+Esses números são resultados reproduzíveis do simulador, não evidência antifraude.
 
 Como nenhum ponteiro `latest` ou política de retenção está implementado, os diretórios de execução crescem até
 que a pessoa remova o volume local. `docker compose down` preserva dados; `docker compose down -v` os apaga.

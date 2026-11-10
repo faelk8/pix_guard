@@ -27,8 +27,8 @@ mostra as métricas no mesmo dashboard.
 Docker executa os serviços em containers isolados. Docker Compose descreve como iniciá-los juntos; um volume
 Docker local mantém os arquivos disponíveis para os containers. O armazenamento da primeira versão usa esse
 volume, sem MinIO ou serviço S3 separado. O processamento Spark da FASE 3 e a avaliação da FASE 4 rodam em
-containers próprios. A integração de streaming continua planejada: a FASE 3 ainda lê diretamente o JSONL e não
-recebe mensagens do Kafka.
+containers próprios. A FASE 3 lê diretamente o JSONL; a integração de streaming do gerador com Kafka permanece
+planejada. Kafka e Redpanda Console já estão disponíveis para inspeção e demonstração.
 
 ## Processar o lote da FASE 3
 

@@ -46,7 +46,9 @@ def main() -> None:
     data_root = Path("/data/pixguard").resolve()
     run_id = args.run_id or uuid.uuid4().hex
     try:
-        manifest = process_events(args.input, data_root, run_id)
+        from pixguard_ai.infrastructure.spark.runner import SparkRun
+
+        manifest = process_events(args.input, data_root, run_id, SparkRun)
     except (ValueError, OSError, RuntimeError, FileExistsError) as error:
         parser.exit(2, f"Pipeline failed: {error}\n")
     print(json.dumps(manifest, sort_keys=True))

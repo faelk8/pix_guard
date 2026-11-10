@@ -1,15 +1,17 @@
 """Spark SDP adapter with isolated runs and atomic manifests."""
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
-from typing import Any
+from typing import Any, BinaryIO, Iterator
 import yaml
 
 from pyspark.sql import SparkSession
@@ -45,6 +47,8 @@ class SparkRun:
             if self.run_dir.exists():
                 raise FileExistsError("run_id already exists; choose a new identifier")
             self.run_dir.mkdir(mode=0o750)
+            snapshot, input_hash, input_bytes = self._snapshot_input()
+            self._verify_input_snapshot(snapshot, input_hash)
             project = self.run_dir / "sdp"
             project.mkdir()
             source_file = Path(__file__).with_name("transformations.py")
@@ -53,7 +57,8 @@ class SparkRun:
             spec.write_text(yaml.safe_dump({
                 "name": "pixguard_offline", "storage": (self.run_dir / "checkpoints").as_uri(),
                 "libraries": [{"glob": {"include": "transformations.py"}}],
-                "configuration": {"spark.pixguard.input": str(self.input_path),
+                "configuration": {"spark.pixguard.input": str(snapshot),
+                                  "spark.pixguard.source_file": str(self.input_path),
                                   "spark.pixguard.run_id": self.run_id,
                                   "spark.sql.shuffle.partitions": "4",
                                   "spark.sql.session.timeZone": "UTC"},
@@ -93,15 +98,12 @@ class SparkRun:
             self._atomic_json(summary_path, {"label_is_synthetic": True,
                                              "top_groups": top_groups,
                                              "gold_group_count": gold.count()})
-            input_hash = sha256()
-            with self.input_path.open("rb") as input_stream:
-                for block in iter(lambda: input_stream.read(1024 * 1024), b""):
-                    input_hash.update(block)
             manifest: dict[str, Any] = {
                 "manifest_version": 1, "run_id": self.run_id, "status": "completed",
                 "schema_version": "payment_event_v1", "pipeline_version": "1.0.0",
                 "label_is_synthetic": True,
-                "input": {"path": str(self.input_path), "sha256": input_hash.hexdigest(), "rows": input_rows},
+                "input": {"path": str(self.input_path), "sha256": input_hash, "rows": input_rows,
+                          "snapshot_path": str(snapshot), "snapshot_bytes": input_bytes},
                 "counts": {"bronze": input_rows, "silver_unique": unique_rows,
                            "duplicates_removed": duplicate_rows, "quarantine": quarantined,
                            "gold": gold.count()},
@@ -113,6 +115,9 @@ class SparkRun:
                 "started_at": started_at, "finished_at": datetime.now(timezone.utc).isoformat(),
                 "elapsed_seconds": round(time.monotonic() - started, 3),
             }
+            # Every SDP view read the same frozen file. Verify both retained bytes and
+            # original source before publishing, never hash a replacement as the input.
+            self._verify_input_snapshot(snapshot, input_hash)
             self._atomic_manifest(manifest)
             return manifest
         except BaseException as error:
@@ -124,6 +129,47 @@ class SparkRun:
             if spark is not None:
                 spark.stop()
             self.lock_path.unlink(missing_ok=True)
+
+    @contextmanager
+    def _open_regular(self, path: Path) -> Iterator[BinaryIO]:
+        """Open a contained regular file without following a replaced final symlink."""
+        resolved = path.resolve(strict=True)
+        if resolved != path or not resolved.is_relative_to(self.data_root):
+            raise ValueError("input path changed or escapes data directory")
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError("input must be a regular file")
+            yield stream
+
+    def _snapshot_input(self) -> tuple[Path, str, int]:
+        """Freeze the bytes once with a bounded copy and retain their digest for audit."""
+        snapshot = self.run_dir / "input-snapshot.jsonl"
+        checksum, size = sha256(), 0
+        with self._open_regular(self.input_path) as source, snapshot.open("xb") as target:
+            for block in iter(lambda: source.read(1024 * 1024), b""):
+                target.write(block)
+                checksum.update(block)
+                size += len(block)
+            target.flush()
+            os.fsync(target.fileno())
+        snapshot.chmod(0o440)
+        return snapshot, checksum.hexdigest(), size
+
+    def _file_digest(self, path: Path) -> str:
+        """Hash contained file bytes in bounded blocks without trusting its pathname."""
+        checksum = sha256()
+        with self._open_regular(path) as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                checksum.update(block)
+        return checksum.hexdigest()
+
+    def _verify_input_snapshot(self, snapshot: Path, expected: str) -> None:
+        """Reject source replacement or snapshot changes before a completed manifest."""
+        if self._file_digest(snapshot) != expected:
+            raise RuntimeError("input snapshot changed during processing")
+        if self._file_digest(self.input_path) != expected:
+            raise RuntimeError("input changed during processing")
 
     def _invoke(self, mode: str, spec: Path) -> None:
         """Execute the official Spark Declarative Pipelines CLI."""

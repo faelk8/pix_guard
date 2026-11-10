@@ -1,6 +1,8 @@
 # Plano do PixGuard AI
 
-**Estado:** FASE 0 concluída: objetivos, arquitetura, decisões e roteiro de implementação definidos.
+**Estado:** FASE 0, FASE 1 e o processamento offline da FASE 3 estão implementados localmente e validados em
+containers. A FASE 2 de streaming Kafka continua planejada; as entregas da FASE 3 ainda aguardam revisão e
+autorização de publicação de Rafael.
 
 ## Objetivo e escopo
 
@@ -18,39 +20,46 @@ podem contextualizar o projeto em gráficos separados.
 
 | Existe | Falta | Como comprovar |
 |---|---|---|
-| Repositório público `faelk8/pix_guard` | desenvolver as fases do roteiro | entregas rastreadas por Issues e Pull Requests |
-| Arquitetura e requisitos da FASE 0 documentados; Issues #1–#4 organizam o primeiro ciclo | implementação da infraestrutura e do gerador | plano, ADRs e Issue #4 |
-| Python, Kafka e Spark como tecnologias planejadas | fixar e validar as versões dentro dos containers | testes de compatibilidade durante as fases de implementação |
+| FASE 0 de arquitetura e FASE 1 de infraestrutura, gerador, painel e Redpanda Console | entrega GitHub de FASE 3 aguarda revisão/autorização | Issues #1–#14 e relatórios locais ignorados em `specs/` |
+| Gerador produz 100.000 eventos sintéticos versionados em JSONL | integração automática do gerador com Kafka | teste do gerador na Issue #2; FASE 2 ainda planejada |
+| Pipeline Spark SDP 4.3.0 no perfil Compose `pipeline` | Kafka streaming e garantias de entrega | dry-run, fixture, lote 100k e segunda execução na Issue #10 |
+| Bronze, Silver, quarentena, Gold, manifesto e resumo dashboard em volume Docker | política de retenção/limpeza de execuções | outputs sob `runs/<run_id>` e leitores em container |
+| Dashboard mostra o manifesto concluído mais recente e resumo Gold | painel Kafka/streaming integrado | testes e resposta HTTP local da Issue #11 |
 | Estatísticas agregadas do Banco Central como fonte opcional futura | verificar utilidade, fonte, licença e formato antes de qualquer uso | não são requisito para o fluxo sintético offline |
-| Volume Docker local como armazenamento inicial | validar compartilhamento e persistência entre serviços | critério da Issue #1 |
-| Spark Declarative Pipelines como alternativa para processamento | executar uma prova com fixture antes de adotá-lo | critério da fase de processamento |
 
 ## Arquitetura proposta
 
 ```mermaid
 flowchart LR
-  GEN[Gerador sintético] --> K[Kafka local]
-  K --> SDP[Ingestão SDP/adaptador comprovado]
-  SDP --> B[Bronze em volume local]
-  B --> S[Silver: contrato, dedupe, quarentena]
-  S --> G[Gold: janelas e features]
-  G --> RULE[Regras explicáveis]
-  G -. opcional .-> ML[Modelo offline]
-  RULE --> DASH[Dashboard web em container]
-  ML --> DASH
-  BCB[BCB agregado] --> CTX[Contexto separado]
+  subgraph Compose[Docker Compose]
+    GEN[Gerador FASE 1] --> JSONL[events.jsonl · volume pixguard_data]
+    JSONL --> DRY[CLI Spark SDP · dry-run]
+    DRY --> RUN[CLI Spark SDP · run por run_id]
+    RUN --> B[Bronze · JSON bruto e proveniência]
+    B --> S[Silver · contrato, UTC, Decimal e deduplicação]
+    S --> Q[Quarentena · inválidos e IDs conflitantes]
+    S --> G[Gold · dia UTC, merchant, canal e status]
+    RUN --> M[Manifesto e resumo limitado]
+    G --> M
+    M --> DASH[Dashboard Streamlit]
+    G --> PARQ[Parquet no volume]
+  end
+  K[Kafka FASE 2 · planejada] -. ainda sem ligação .-> JSONL
+  CON[Redpanda Console] --- K
 ```
 
-O `docker-compose.yml` deverá reunir `kafka`, `app`, `dashboard` e um serviço de pipeline. O serviço de
-processamento começa reservado para uma fase posterior. Um volume Docker nomeado compartilhado em
-`/data/pixguard` guardará os eventos e resultados; não será necessário adicionar MinIO nesta versão. A primeira
-implementação deverá gerar 100 mil eventos no volume sem manter o conjunto inteiro em memória. A integração com
-Kafka e o processamento Spark serão validados em etapas próprias, sem presumir garantia de entrega de ponta a
-ponta.
+O `docker-compose.yml` contém `kafka`, `app`, `dashboard` e `pipeline`; o Spark é opt-in pelo perfil `pipeline`.
+Um volume Docker nomeado em `/data/pixguard` mantém o JSONL, os Parquet e os manifestos. O fluxo de processamento
+da FASE 3 começa no arquivo da FASE 1 e não lê Kafka. Kafka e Redpanda Console continuam disponíveis para
+inspeção manual, mas o gerador ainda não publica no broker.
 
-Dashboard progressivo: a primeira tela mostrará execução e contagem do gerador; depois poderá apresentar Kafka,
-mensagens atrasadas ou repetidas, qualidade Bronze/Silver/Gold, regras e métricas. O painel e o processamento
-rodarão em containers; o navegador no host será apenas o cliente visual.
+O runtime Spark é uma imagem separada com Python 3.12, Java 17 e PySpark com SDP 4.3.0. Cada `run_id` cria um
+diretório e warehouse isolados; o dashboard escolhe o manifesto concluído válido com `finished_at` UTC mais
+recente e consome um resumo limitado a 20 grupos. A tela não inicializa Spark nem carrega o JSONL completo.
+
+O processamento lê o arquivo pelo Spark, sem materializar o conjunto inteiro na memória do driver. O dashboard
+e o pipeline executam em containers; o navegador no host é somente cliente visual. Esta arquitetura é local ao
+Docker host, não distribuída nem de alta disponibilidade.
 
 ### Esboço da primeira tela
 
@@ -65,9 +74,9 @@ rodarão em containers; o navegador no host será apenas o cliente visual.
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-O dashboard deverá ler o estado persistido pelo gerador e distinguir uma execução concluída de estados vazios ou
-com erro. Gráficos de streaming, camadas e alertas só entram depois que as respectivas fontes existirem e forem
-validadas.
+O dashboard lê o estado persistido pelo gerador e distingue uma execução concluída de estados vazios ou com erro.
+Na FASE 3, também mostra contagens, resumo Gold e alertas de execução falha. Gráficos de streaming só entram
+depois de existir uma fonte Kafka/streaming validada.
 
 ## Contrato e segurança de dados
 
@@ -164,6 +173,31 @@ conectam as etapas e incluem somente resultados já verificados.
 3. Structured Streaming: DataFrames, checkpoints, watermark e semântica do sink.
 4. SDP: declarar datasets/fluxos, grafo, tabelas e diferença entre dry-run e execução real.
 5. Qualidade, quarentena, métricas e risco de leakage em ML.
+
+## FASE 3: execução e resultados verificados
+
+A FASE 3 transforma o JSONL sintético em arquivos Parquet locais:
+
+- **Bronze** preserva cada linha original e metadados de origem/execução.
+- **Silver** valida `payment_event_v1`, usa UTC e valor monetário `Decimal`, mantém uma linha quando o mesmo
+  `event_id` aparece com payload equivalente e encaminha registros inválidos ou todos os membros de um grupo
+  com payload divergente à quarentena. Rafael confirmou a quarentena integral dos conflitos.
+- **Gold** soma BRL como `Decimal` e conta eventos por dia UTC, comerciante, canal e status. A coluna
+  `ground_truth` não é usada na agregação.
+- **Manifesto** registra `run_id`, checksum da entrada, versões, contagens, reconciliação e caminhos. Só é
+  publicado como concluído depois de todas as camadas; cada execução tem warehouse independente.
+- **Dashboard** lê a última execução concluída válida, seu manifesto e um resumo de até 20 grupos; erro posterior
+  é um aviso e não substitui resultados concluídos.
+
+Na validação com a seed padrão, o gerador escreveu 100.000 registros (55.919.188 bytes). Dois processamentos
+em `run_id` separados tiveram Bronze 100.000, Silver 100.000, duplicatas removidas 0, quarentena 0 e Gold 3.269.
+Uma comparação em outro container encontrou zero diferenças entre os Gold. A soma BRL observada foi
+`245449133.57`. Uma fixture adicional cobriu payload equivalente com whitespace distinto, conflito, JSON inválido
+e evento atrasado. Esses números são resultados reproduzíveis do simulador, não evidência antifraude.
+
+Como nenhum ponteiro `latest` ou política de retenção está implementado, os diretórios de execução crescem até
+que a pessoa remova o volume local. `docker compose down` preserva dados; `docker compose down -v` os apaga.
+Kafka, streaming, exactly-once, dados reais, modelos de ML e monitoramento de produção continuam fora desta fase.
 
 ## Resultado da FASE 0
 

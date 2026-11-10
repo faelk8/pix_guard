@@ -1,9 +1,11 @@
 Arquitetura
 ===========
 
-PixGuard AI é um laboratório para estudar dados, mensageria e processamento. Na FASE 1, o que está implementado
-é a geração sintética em arquivo JSONL, um painel que lê o manifesto do gerador e uma interface para explorar o
-Kafka. O gerador e o broker ainda não estão ligados por um produtor Kafka.
+PixGuard AI é um laboratório para estudar dados, mensageria e processamento. A FASE 1 gera dados sintéticos em
+JSONL, acompanha o manifesto do gerador e disponibiliza uma interface para explorar Kafka. A FASE 3 acrescenta
+um pipeline offline que lê o JSONL com Spark Declarative Pipelines (SDP), materializa Bronze/Silver/Gold em
+Parquet no volume Docker e alimenta a seção de processamento do dashboard. O gerador e o broker continuam sem
+ligação automática; streaming Kafka é a FASE 2 planejada.
 
 Fluxo principal
 ---------------
@@ -11,20 +13,37 @@ Fluxo principal
 .. mermaid::
 
    flowchart LR
-     GEN[Gerador sintético] --> JSONL[JSONL no volume Docker]
-     JSONL --> DASH[Painel de progresso]
-     K[Kafka no Compose] --> CONSOLE[Redpanda Console]
-     DEMO[Mensagem de demonstração] --> K
-     GEN -. publicação automática prevista na FASE 2 .-> K
+     subgraph compose[Docker Compose]
+       GEN[Gerador FASE 1] --> JSONL[events.jsonl · volume]
+       JSONL --> SDP[Spark SDP · FASE 3 offline]
+       SDP --> B[Bronze · JSON bruto]
+       B --> S[Silver · validado e único]
+       S --> G[Gold · agregados Decimal]
+       S --> Q[Quarentena · inválidos/conflitos]
+       SDP --> M[Manifesto e resumo top-20]
+       G --> PARQ[Parquet no volume]
+       M --> DASH[Dashboard]
+       PARQ -. consultável .-> DASH
+       K[Kafka · FASE 2 planejada] --> CONSOLE[Redpanda Console]
+       DEMO[Mensagem manual de demonstração] --> K
+     end
+     GEN -. publicação automática futura .-> K
 
 Docker é o padrão de container: cada serviço fica isolado e tem suas dependências. Docker Compose descreve os
 serviços, rede, portas e volumes. Kafka é um sistema de mensagens que permite a serviços diferentes trocarem
 eventos. Redpanda Console é uma aplicação web compatível com o protocolo Kafka e torna os tópicos e mensagens
 visíveis no navegador.
 
-O arquivo ``events.jsonl`` é JSON Lines: cada linha contém um evento JSON independente. Isso permite gravar e
-ler um conjunto grande progressivamente. O painel acompanha um manifesto pequeno com estado e contagens; não
-carrega o arquivo inteiro para mostrar progresso.
+O arquivo ``events.jsonl`` é JSON Lines: cada linha contém um evento JSON independente. Isso permite ao Spark
+ler um conjunto grande sem carregar o arquivo inteiro para a memória do processo driver. O perfil Compose
+``pipeline`` executa a CLI real ``spark-pipelines``; um ``dry-run`` prepara/valida o grafo declarado e ``run``
+materializa os datasets. Cada execução usa um ``run_id`` e warehouse próprios. O dashboard lê o manifesto
+concluído mais recente e um resumo limitado, sem iniciar Spark.
+
+Bronze conserva os registros brutos; Silver valida o contrato `payment_event_v1`, guarda horários em UTC e valores
+como Decimal, deduplica payloads equivalentes e envia inválidos/conflitos à quarentena; Gold agrega quantidade e
+valor por dia UTC, comerciante, canal e status. Um grupo com o mesmo ``event_id`` e payload divergente vai inteiro
+à quarentena, segundo decisão de Rafael. Os resultados e o dashboard permanecem sintéticos e locais.
 
 .. toctree::
    :maxdepth: 1

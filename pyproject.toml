@@ -21,6 +21,7 @@ pyspark = {version = "4.3.0", extras = ["pipelines"]}
 [tool.poetry.scripts]
 pixguard = "pixguard_ai.interfaces.cli:main"
 pixguard-pipeline = "pixguard_ai.interfaces.pipeline_cli:main"
+pixguard-analysis = "pixguard_ai.interfaces.analysis_cli:main"
 
 [build-system]
 requires = ["poetry-core==2.2.1"]

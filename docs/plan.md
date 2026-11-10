@@ -1,8 +1,8 @@
 # Plano do PixGuard AI
 
-**Estado:** FASE 0, FASE 1 e o processamento offline da FASE 3 estão implementados localmente e validados em
-containers. A FASE 2 de streaming Kafka continua planejada; as entregas da FASE 3 ainda aguardam revisão e
-autorização de publicação de Rafael.
+**Estado:** FASE 0, FASE 1, FASE 3 e FASE 4 estão implementadas localmente e validadas em containers. FASE 2
+de streaming Kafka continua planejada; as entregas da FASE 3 e FASE 4 ainda aguardam revisão e autorização de
+publicação de Rafael.
 
 ## Objetivo e escopo
 
@@ -25,6 +25,7 @@ podem contextualizar o projeto em gráficos separados.
 | Pipeline Spark SDP 4.3.0 no perfil Compose `pipeline` | Kafka streaming e garantias de entrega | dry-run, fixture, lote 100k e segunda execução na Issue #10 |
 | Bronze, Silver, quarentena, Gold, manifesto e resumo dashboard em volume Docker | política de retenção/limpeza de execuções | outputs sob `runs/<run_id>` e leitores em container |
 | Dashboard mostra o manifesto concluído mais recente e resumo Gold | painel Kafka/streaming integrado | testes e resposta HTTP local da Issue #11 |
+| Baseline fixa, avaliação de 100 mil registros e métricas no dashboard | ML e dados representativos de fraude real | relatórios locais das Issues #16–#18; runs imutáveis `eval-003` e `eval-004` |
 | Estatísticas agregadas do Banco Central como fonte opcional futura | verificar utilidade, fonte, licença e formato antes de qualquer uso | não são requisito para o fluxo sintético offline |
 
 ## Arquitetura proposta
@@ -43,6 +44,12 @@ flowchart LR
     G --> M
     M --> DASH[Dashboard Streamlit]
     G --> PARQ[Parquet no volume]
+    S --> RULE[Regra fixa FASE 4]
+    RULE --> PRED[Predições sem rótulo]
+    PRED --> JOIN[Junção posterior por event_id]
+    LABEL[ground_truth · avaliação] --> JOIN
+    JOIN --> METRICS[Métricas e resumo FASE 4]
+    METRICS --> DASH
   end
   K[Kafka FASE 2 · planejada] -. ainda sem ligação .-> JSONL
   CON[Redpanda Console] --- K
@@ -75,8 +82,9 @@ Docker host, não distribuída nem de alta disponibilidade.
 ```
 
 O dashboard lê o estado persistido pelo gerador e distingue uma execução concluída de estados vazios ou com erro.
-Na FASE 3, também mostra contagens, resumo Gold e alertas de execução falha. Gráficos de streaming só entram
-depois de existir uma fonte Kafka/streaming validada.
+Na FASE 3, também mostra contagens, resumo Gold e alertas de execução falha. Na FASE 4, o dashboard valida
+manifesto e hashes e mostra matriz de confusão, métricas, baseline negativa e exemplos limitados. Gráficos de
+streaming só entram depois de existir uma fonte Kafka/streaming validada.
 
 ## Contrato e segurança de dados
 
@@ -131,9 +139,10 @@ fontes existirem. A interface não deverá inventar métricas e deverá tratar e
 - Como o repositório é público, revisar cada entrega para manter segredos, dados reais e artefatos locais fora
   do histórico. Documentação, código e configuração são publicados em entregas com escopo definido.
 
-ADRs registrados: armazenamento em volume Docker local, execução em containers e uso de dados sintéticos
-reproduzíveis. Decisões futuras incluem a abordagem de processamento Spark, checkpoints e critérios para avaliar
-qualquer modelo, depois de estabelecer um baseline.
+ADRs registrados incluem armazenamento em volume Docker local, execução em containers, dados sintéticos
+reproduzíveis e execução Spark por `run_id`. A ADR 0005 da baseline permanece proposta; a implementação dos
+defaults didáticos não equivale a aprovação de política. Streaming e qualquer hipótese de modelo continuam
+pendentes.
 
 ## Backlog por fases
 
@@ -147,7 +156,9 @@ documentação são organizadas em Pull Requests vinculadas às Issues e validad
 3. FASE 1: Compose base (`INFRA-001`, Issue #1), contrato/gerador de 100 mil eventos (`GEN-001`, Issue #2), dashboard (`UI-001`, Issue #3) e Redpanda Console para inspeção visual do broker (`INFRA-002`, Issue #6).
 4. FASE 2: Kafka, filesystem compartilhado, replay, idempotência, atraso/quarentena e painel de streaming.
 5. FASE 3: prova SDP no container com Bronze/Silver/Gold no volume local, consulta visual e execução reproduzível.
-6. FASE 4: baseline, métricas, painel visual completo e comparação ML apenas se justificada.
+6. FASE 4: baseline fixa, avaliação, painel e documentação (`RULE-001` #16, `ANALYSIS-001` #17,
+   `UI-003` #18 e `DOCS-003` #19). Implementação local concluída, aguardando revisão/autorização de publicação;
+   o artigo `ARTICLE-002` #20 é preparado localmente.
 7. FASE 5: hardening, execução E2E totalmente em Docker, README/runbook e série editorial final.
 
 Cada fase terá Issue, critérios, validação executada em containers, evidências e um artigo próprio. Os artigos
@@ -198,6 +209,32 @@ e evento atrasado. Esses números são resultados reproduzíveis do simulador, n
 Como nenhum ponteiro `latest` ou política de retenção está implementado, os diretórios de execução crescem até
 que a pessoa remova o volume local. `docker compose down` preserva dados; `docker compose down -v` os apaga.
 Kafka, streaming, exactly-once, dados reais, modelos de ML e monitoramento de produção continuam fora desta fase.
+
+## FASE 4: baseline e avaliação sintética
+
+A FASE 4 aplica `amount_threshold_v1` 1.0.0: sinalizar quando `amount_decimal >= R$ 10.000,00`. O limite é a
+fronteira da classe `high_amount` criada no gerador, não um valor escolhido por treinamento ou política
+financeira. O score é o valor em centavos, sem significado de probabilidade. A projeção de entrada do scorer só
+contém essa feature; o rótulo é juntado depois que as previsões foram salvas.
+
+Na execução `batch-100k-001`, com seed 42 comprovada pelo manifesto do gerador, houve 100.000 linhas Silver:
+5.008 positivos e 94.992 negativos. Dois runs independentes (`eval-003` e `eval-004`) registraram TP=5.008,
+FP=0, FN=0, TN=94.992; precision, recall, F1 e PR-AUC foram 1,0. A baseline sempre-negativo teve accuracy
+0,94992 e deixou passar os 5.008 positivos. Os dois runs foram logicamente equivalentes em container novo.
+As faixas são disjuntas (positivos R$10.000–R$50.000; demais R$1–R$2.000), portanto o resultado perfeito
+demonstra apenas conformidade com o simulador.
+
+A origem da FASE 3 não tem checksum histórico de Silver. A FASE 4 congelou um inventário SHA-256 no início e
+conferiu o mesmo inventário e manifesto ao final: isso detecta alterações durante a análise, mas não autentica
+retroativamente que Silver permaneceu igual desde sua criação.
+
+O dashboard verifica o manifesto e hashes dos artefatos e mostra matriz, métricas, baseline e até vinte
+explicações. Ele não importa Spark. Quando um denominador é zero, mostra valor nulo/indefinido com sua razão.
+Consulte [o guia de análise](source/guia/analise-fase-4.md) para termos e comandos.
+
+Kafka streaming não está envolvido, ML não foi desenvolvido e não houve avaliação cega nem dados reais. A ADR
+0005 permanece `proposed`: os defaults executados são configuração observada para estudo, não decisão de produto
+ou aprovação formal de Rafael.
 
 ## Resultado da FASE 0
 

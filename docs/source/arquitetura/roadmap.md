@@ -9,7 +9,7 @@ leitor consiga relacionar uma capacidade com seus testes e evidências.
 | 1 — Fluxo inicial | Docker, contrato de eventos, geração de 100 mil registros, painel e Console Kafka. | Implementada; testes em container passaram. |
 | 2 — Streaming | Publicar e consumir eventos em Kafka; estudar replay, atraso, duplicatas e falhas. | Planejada; gerador ainda não publica no broker, e a pipeline não lê Kafka. |
 | 3 — Processamento offline | Processar o JSONL da FASE 1 em Bronze, Silver, quarentena e Gold com Spark SDP. | Implementada e validada em containers; execução local ainda aguarda revisão/publicação. |
-| 4 — Análise | Comparar regras explicáveis e, se justificado, modelos experimentais. | Planejada; nenhuma previsão antifraude foi construída. |
+| 4 — Análise | Avaliar uma regra explicável fixa e mostrar métricas sintéticas; ML exige hipótese à parte. | Implementada e validada localmente em Docker; aguardando revisão/publicação. Não comprova detecção real. |
 | 5 — Operação | Integrar o fluxo, testar ponta a ponta e consolidar guias. | Planejada. |
 
 ## Por que separar as fases?
@@ -21,6 +21,7 @@ com dados e processamento conferidos faz sentido avaliar regras ou modelos.
 Todo resultado usa dados inventados e só descreve o comportamento do simulador. As métricas não podem ser
 interpretadas como desempenho contra fraude real. A FASE 3 lê `events.jsonl` diretamente: ter um serviço Kafka
 no Compose e um Console para mensagens de demonstração não significa que o gerador esteja conectado ao broker.
+A FASE 4 também é offline e consome a Silver da FASE 3.
 
 ## O que o processamento faz
 

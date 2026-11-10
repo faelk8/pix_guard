@@ -111,17 +111,30 @@ permitem auditoria, mas o volume continua local e sem retenção automática/SLA
 Resultados possivelmente perfeitos só demonstram coerência com o simulador. Percentuais nominais,
 características sintéticas e ausência de custos reais não autorizam comparação com antifraude bancário.
 Ground truth presente em Silver exige barreiras testadas; comentários ou blacklist não são suficientes.
-Não há treino, avaliação medida ou mudança de código nesta entrega de planejamento.
+O plano original não executou código. Implementações subsequentes nas Issues #16–#18 mediram conformidade e
+adicionaram o leitor visual; os resultados e a validação local não convertem esta proposta em decisão aprovada.
 
 ## Decisões pendentes e execução posterior
 
-Rafael ainda precisa decidir: regra e limite inclusivo, protocolo de conformidade sem holdout, política de
-métricas indefinidas/PR-AUC, artefatos/painel e adiamento de ML. O status permanece **proposed**. Fechar o
-planejamento não aprova essas escolhas nem libera desenvolvimento sem o gate fundamental validado.
+Rafael ainda precisa decidir formalmente se aceita a regra e limite inclusivo, protocolo de conformidade sem
+holdout, política de métricas indefinidas/PR-AUC, artefatos/painel e adiamento de ML. O status permanece
+**proposed**. A implementação local fornece evidência para revisão, não aprovação de produto.
 
-Sequência sugerida: contrato/regra → avaliação/artefatos → dashboard → README/ADR com resultados medidos.
-Cada entrega futura terá Issue prévia, caminhos próprios, testes conferidos pelo orquestrador e PR; a PR
-final recebe revisão independente dos SHAs imutáveis. Commits separados por responsabilidade. Números de
-Issues futuras serão calculados pelo orquestrador; nenhum foi reservado nesta ADR. O plano operacional
-local PLAN-003 detalha caminhos e critérios; `specs/` não é publicado. Sphinx e sincronização do projeto
-com Jota somente quando Rafael pedir, sem impedir consulta/registro de preferências pessoais.
+## Implementação e evidência local (Issues #16–#18)
+
+`RULE-001` (#16) implementou a baseline fixa em centavos. `ANALYSIS-001` (#17) avaliou a Silver de
+`batch-100k-001` (seed 42, 100.000 eventos), persistiu predições sem rótulo antes do join, publicou métricas e
+comparou runs imutáveis. `UI-003` (#18) acrescentou uma tela que valida os hashes dos artefatos e mostra matriz,
+métricas, baseline sempre-negativo e até vinte exemplos.
+
+No conjunto medido houve 5.008 positivos e 94.992 negativos: TP=5.008, FP=0, FN=0 e TN=94.992. Precision,
+recall, F1 e PR-AUC foram 1,0; a accuracy da baseline sempre-negativo foi 0,94992. Dois runs (`eval-003` e
+`eval-004`) foram logicamente equivalentes em container novo. As faixas do gerador são disjuntas: positivos
+R$10.000–R$50.000 e demais R$1–R$2.000. Portanto, a perfeição é esperada por construção e não mede fraude real.
+
+**Limite de proveniência:** o manifesto FASE 3 não tinha checksum histórico dos Parquet Silver. A análise
+inventariou os arquivos no início e confirmou o inventário e manifesto novamente ao final, detectando mudança
+durante o processamento. Isso não prova que a Silver não foi alterada antes da análise.
+
+A Issue #19 documenta comportamento e resultados. A Issue #20 prepara um artigo local. A PR/revisão e qualquer
+publicação GitHub dependem de autorização de Rafael; `specs/` permanece local e ignorada.

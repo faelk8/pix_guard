@@ -4,6 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+pytest.importorskip("pyspark", reason="Analysis integration tests require the pipeline image")
 from pyspark.sql import SparkSession, functions as F, types as T
 
 from pixguard_ai.domain.analysis import RuleConfig, score_amount

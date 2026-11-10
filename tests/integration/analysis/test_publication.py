@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+pytest.importorskip("pyspark", reason="Analysis integration tests require the pipeline image")
 from pyspark.sql import functions as F
 
 from pixguard_ai.domain.analysis import RuleConfig

@@ -90,10 +90,20 @@ services:
   pipeline:
     <<: *app
     profiles: ["pipeline"]
-    command: ["pixguard", "idle"]
-    depends_on:
-      kafka:
-        condition: service_healthy
+    image: pixguard-spark:local
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    command: ["pixguard-pipeline", "--help"]
+    environment:
+      PIXGUARD_DATA_DIR: /data/pixguard
+      SPARK_LOCAL_IP: 127.0.0.1
+      JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
+      OMP_NUM_THREADS: "1"
+    networks: []
+    mem_limit: 4g
+    cpus: 2.0
+    pids_limit: 512
 
   # Starts Streamlit once the dashboard module from UI-001 exists.
   dashboard:

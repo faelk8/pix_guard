@@ -1,7 +1,9 @@
 Guia de uso
 ===========
 
-Este guia explica o laboratório e ajuda a executar a FASE 1. O **PixGuard AI não processa pagamentos nem é um sistema antifraude**: todos os registros e rótulos são inventados para estudo.
+Este guia começa pelos conceitos e comandos da FASE 1 e inclui um passo a passo para o processamento offline da
+FASE 3. O **PixGuard AI não processa pagamentos nem é um sistema antifraude**: todos os registros e rótulos são
+inventados para estudo.
 
 Primeiros passos
 ----------------
@@ -33,6 +35,7 @@ As páginas seguintes explicam o contrato, o painel e a inspeção de mensagens.
 
    contrato
    dashboard
+   processamento-fase-3
    kafka-console
 
 Solução de problemas

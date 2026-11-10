@@ -8,20 +8,49 @@
 
 O PixGuard AI é um laboratório educacional para estudar como dados de pagamentos podem ser gerados, validados,
 processados e apresentados. Ele **não processa pagamentos, não usa transações reais e não é um sistema antifraude**.
-Os eventos e rótulos são sintéticos; resultados descrevem apenas o simulador.
+Os eventos e rótulos são sintéticos; resultados descrevem apenas o simulador. A FASE 1 gera JSONL e mostra o
+progresso; a FASE 3 já processa esse arquivo offline com Spark Declarative Pipelines (SDP), produz camadas
+Bronze, Silver e Gold e mostra o resultado no dashboard.
 
 ## Como o projeto deve funcionar
 
 1. Um gerador cria registros fictícios de pagamentos.
 2. Kafka, sistema de mensageria, será o caminho de transporte entre serviços nas fases de streaming.
 3. Um pipeline, sequência de etapas de processamento, validará e organizará os dados.
-4. Os resultados ficarão em camadas: Bronze (originais), Silver (validados) e Gold (resumidos).
-5. Um dashboard mostrará o progresso e os indicadores do laboratório.
+4. Na FASE 3, Spark organiza o JSONL em camadas: Bronze (linhas originais), Silver (eventos válidos e únicos) e
+   Gold (agregados resumidos).
+5. O dashboard mostra o progresso do gerador e o resultado da última execução Spark concluída.
 
 Docker executa os serviços em containers isolados. Docker Compose descreve como iniciá-los juntos; um volume
 Docker local mantém os arquivos disponíveis para os containers. O armazenamento da primeira versão usa esse
-volume, sem MinIO ou serviço S3 separado. A integração de streaming e o processamento com Spark serão entregues
-em fases próprias.
+volume, sem MinIO ou serviço S3 separado. O processamento Spark da FASE 3 está implementado no perfil
+`pipeline`; ele lê diretamente o JSONL. A integração automática com Kafka permanece na FASE 2 planejada.
+
+A FASE 3 entrega o processamento offline em uma mudança independente; a FASE 4 mantém baseline, métricas e
+visualização em outra entrega. A FASE 2 já disponibiliza Kafka/Redpanda Console; a integração de streaming do
+gerador permanece planejada.
+
+## Processar o lote da FASE 3
+
+Os comandos abaixo são executados a partir da raiz do repositório. Primeiro gere o lote sintético padrão e
+valide o plano do Spark; depois execute o processamento real:
+
+```bash
+docker compose run --rm --no-deps app pixguard generate
+docker compose --profile pipeline run --rm pipeline pixguard-pipeline dry-run
+docker compose --profile pipeline run --rm pipeline pixguard-pipeline process --run-id fase3-exemplo-001
+docker compose up -d --wait dashboard
+```
+
+Abra [http://localhost:8501](http://localhost:8501) e procure a seção **Processamento offline — FASE 3**.
+Ela exibe as contagens Bronze/Silver/Gold, a reconciliação, os grupos Gold resumidos e um aviso de dados
+sintéticos. Um lote verificado produziu 100.000 linhas Bronze, 100.000 Silver, nenhuma quarentena e 3.269
+grupos Gold; duas execuções com `run_id` diferentes produziram os mesmos agregados. O valor observado descreve
+somente a seed e o simulador usados no teste.
+
+Cada `run_id` tem seu próprio diretório em `/data/pixguard/runs/` no volume Docker `pixguard_data`. O manifesto
+e os Parquet ficam no volume, não no repositório. `docker compose down` mantém o volume; `docker compose down -v`
+apaga o volume e os dados locais.
 
 ## Visualizar o Kafka
 
@@ -51,8 +80,9 @@ gerados no Kafka pertence à fase de streaming.
 
 - **FASE 0 — Arquitetura:** objetivos, limites, decisões e critérios de validação.
 - **FASE 1 — Fluxo inicial:** serviços Docker, contrato de eventos, gerador sintético, painel de progresso e Redpanda Console para inspecionar Kafka.
-- **FASE 2 — Streaming:** integração com Kafka, repetição, atrasos e falhas.
-- **FASE 3 — Processamento:** prova com Spark e camadas Bronze, Silver e Gold.
+- **FASE 2 — Streaming:** planejada; ligar gerador e Kafka, estudar repetição, atrasos e falhas.
+- **FASE 3 — Processamento offline:** implementada localmente; processa JSONL com Spark SDP e camadas Bronze,
+  Silver e Gold. Não consome Kafka.
 - **FASE 4 — Análise:** regras explicáveis, métricas e eventual avaliação de aprendizado de máquina.
 - **FASE 5 — Operação:** integração de ponta a ponta, validações finais e guias de execução.
 

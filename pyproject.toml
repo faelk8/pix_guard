@@ -12,8 +12,15 @@ streamlit = "1.50.0"
 [tool.poetry.group.test.dependencies]
 pytest = "8.4.2"
 
+[tool.poetry.group.pipeline]
+optional = true
+
+[tool.poetry.group.pipeline.dependencies]
+pyspark = {version = "4.3.0", extras = ["pipelines"]}
+
 [tool.poetry.scripts]
 pixguard = "pixguard_ai.interfaces.cli:main"
+pixguard-pipeline = "pixguard_ai.interfaces.pipeline_cli:main"
 
 [build-system]
 requires = ["poetry-core==2.2.1"]

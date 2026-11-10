@@ -1,6 +1,6 @@
 # ADR 0004 — Execuções locais de Spark SDP isoladas por `run_id`
 
-- Status: proposta operacional pendente de revisão de Rafael; não aprovada
+- Status: proposta de isolamento por `run_id` pendente de revisão de Rafael; regra de quarentena de conflitos aceita por Rafael em 2026-11-09
 - Data: 2026-11-09
 - Issue: #14
 - Responsáveis: agente de arquitetura de dados
@@ -32,10 +32,10 @@ versão do contrato e pipeline, referência e checksums da entrada, contagens e 
 leem somente execuções concluídas pelo caminho registrado no manifesto. Reexecuções usam outro `run_id`; não
 reutilizam nem limpam o warehouse anterior como parte normal do processamento.
 
-Como regra operacional ainda sujeita à revisão de Rafael, propõe-se colapsar duplicatas idênticas por
-`event_id` e encaminhar integralmente à quarentena qualquer grupo que contenha o mesmo `event_id` com payloads
-divergentes. Esta regra não altera o contrato v1 e não deve ser considerada aprovada ou implementada até revisão
-e especificação contratual próprias.
+Como regra operacional, duplicatas idênticas podem colapsar para uma única linha Silver. Rafael confirmou que
+todo grupo que contenha o mesmo `event_id` com payloads divergentes será encaminhado integralmente à quarentena,
+sem escolher um vencedor arbitrariamente. A confirmação trata do conflito; a política completa de deduplicação
+e o contrato Silver ainda precisam de testes. Esta regra não altera o contrato v1.
 
 O runtime candidato é Python 3.12, Java 17 e `pyspark[pipelines]==4.3.0` sobre Debian Bookworm, conforme a
 PoC. Isso registra a configuração testada, não fixa imagem ou lockfile produtivo.
@@ -61,8 +61,9 @@ PoC. Isso registra a configuração testada, não fixa imagem ou lockfile produt
   na implementação.
 - Cada execução ocupa espaço próprio. Retenção, remoção segura e recuperação após falha ficam pendentes e não
   devem apagar ou misturar artefatos de outra execução.
-- A deduplicação idêntica e a quarentena integral de conflitos são propostas, não resultados observados. A
-  fixture da PoC só verificou a primeira regra em duas linhas idênticas.
+- A quarentena integral de conflitos foi confirmada por Rafael e exercitada na fixture da Issue #10, junto com
+  deduplicação de payloads semanticamente idênticos que diferem em whitespace. A política continua restrita a
+  `event_id` no processamento offline; outras regras de qualidade e evolução do contrato exigem especificação própria.
 - A FASE 3 permanece processamento offline de JSONL. Kafka, streaming e garantias exactly-once pertencem a
   escopo futuro e não são consequências desta ADR.
 

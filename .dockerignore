@@ -1,5 +1,6 @@
 **
 !Dockerfile
+!Dockerfile.spark
 !pyproject.toml
 !poetry.lock
 !src/

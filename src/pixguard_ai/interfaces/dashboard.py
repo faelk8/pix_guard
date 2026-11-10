@@ -11,6 +11,10 @@ from types import ModuleType
 from typing import cast
 
 from pixguard_ai.application.generate_events import GenerationManifest
+from pixguard_ai.infrastructure.local.pipeline_results import (
+    PipelineSnapshot,
+    load_latest_pipeline_results,
+)
 
 
 MAX_MANIFEST_BYTES = 65_536
@@ -162,7 +166,7 @@ def main() -> None:
     """Start Streamlit with a permanent synthetic-data notice and live snapshots."""
     import streamlit as st
 
-    st.set_page_config(page_title="PixGuard AI — geração sintética", page_icon="🧪")
+    st.set_page_config(page_title="PixGuard AI — FASE 3", page_icon="🧪")
     st.title("PixGuard AI")
     st.warning("DADOS 100% SINTÉTICOS — eventos fictícios para estudo, sem transações ou pessoas reais.")
     st.caption("Progresso do gerador local • lote padrão de 100.000 eventos")
@@ -174,6 +178,48 @@ def main() -> None:
         render_snapshot(st, load_snapshot(path))
 
     refresh()
+    st.divider()
+    st.header("Processamento offline — FASE 3")
+    render_pipeline_results(st, load_latest_pipeline_results(Path(os.environ.get(
+        "PIXGUARD_DATA_DIR", "/data/pixguard"))))
+
+
+def render_pipeline_results(st: ModuleType, snapshot: PipelineSnapshot) -> None:
+    """Render completed Spark metrics and the bounded Gold summary without loading Spark."""
+    st.caption("Esta etapa processa o JSONL sintético da FASE 1. Não consome Kafka.")
+    if snapshot.manifest is None:
+        (st.error if snapshot.error else st.info)(snapshot.message)
+        return
+
+    manifest = snapshot.manifest
+    if snapshot.error:
+        st.warning(snapshot.message)
+    else:
+        st.success(snapshot.message)
+    if snapshot.newer_failure:
+        st.warning(f"A execução mais recente {snapshot.newer_failure} falhou; os indicadores abaixo vêm da última execução concluída.")
+    st.write(f"Execução: `{manifest['run_id']}` • início UTC: {manifest['started_at']} • fim UTC: {manifest['finished_at']}")
+    counts = manifest["counts"]
+    columns = st.columns(5)
+    labels = (("Entrada / Bronze", counts["bronze"]), ("Silver válidos", counts["silver_unique"]),
+              ("Duplicatas removidas", counts["duplicates_removed"]), ("Quarentena", counts["quarantine"]),
+              ("Grupos Gold", counts["gold"]))
+    for column, (label, value) in zip(columns, labels):
+        column.metric(label, format_count(value))
+    st.caption("Reconciliação: entrada = Silver válidos + duplicatas removidas + quarentena. Valores do manifesto concluído.")
+    st.subheader("Resumo Gold: maiores grupos por volume de eventos")
+    if snapshot.top_groups:
+        table = [{"Dia UTC": row["event_day_utc"], "Comerciante sintético": row["merchant_id"],
+                  "Canal": row["channel"], "Status": row["status"],
+                  "Eventos": format_count(row["event_count"]),
+                  "Total BRL": row["amount_total_brl"]} for row in snapshot.top_groups]
+        st.dataframe(table, use_container_width=True, hide_index=True)
+        st.bar_chart({"Eventos por grupo (top 20)": [row["event_count"] for row in snapshot.top_groups]},
+                     height=260)
+        st.caption("A tabela e o gráfico usam somente a amostra Gold resumida (até 20 grupos); BRL permanece como texto decimal exato.")
+    else:
+        st.info("A execução concluiu sem grupos Gold para resumir.")
+    st.warning("Simulação didática: os rótulos e agregados sintéticos não medem desempenho antifraude real.")
 
 
 if __name__ == "__main__":

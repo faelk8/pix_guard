@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import Decimal
 import json
 import math
 import os
@@ -14,6 +15,10 @@ from pixguard_ai.application.generate_events import GenerationManifest
 from pixguard_ai.infrastructure.local.pipeline_results import (
     PipelineSnapshot,
     load_latest_pipeline_results,
+)
+from pixguard_ai.infrastructure.local.analysis_results import (
+    AnalysisSnapshot,
+    load_latest_analysis_results,
 )
 
 
@@ -182,6 +187,10 @@ def main() -> None:
     st.header("Processamento offline — FASE 3")
     render_pipeline_results(st, load_latest_pipeline_results(Path(os.environ.get(
         "PIXGUARD_DATA_DIR", "/data/pixguard"))))
+    st.divider()
+    st.header("Avaliação da regra — FASE 4")
+    render_analysis_results(st, load_latest_analysis_results(Path(os.environ.get(
+        "PIXGUARD_DATA_DIR", "/data/pixguard"))))
 
 
 def render_pipeline_results(st: ModuleType, snapshot: PipelineSnapshot) -> None:
@@ -220,6 +229,89 @@ def render_pipeline_results(st: ModuleType, snapshot: PipelineSnapshot) -> None:
     else:
         st.info("A execução concluiu sem grupos Gold para resumir.")
     st.warning("Simulação didática: os rótulos e agregados sintéticos não medem desempenho antifraude real.")
+
+
+def _format_metric(metrics: dict[str, object], name: str) -> str:
+    """Format a validated metric or explain why it has no defined value."""
+    value = metrics[name]
+    if not value["defined"]:
+        reasons = {
+            "no_alerts": "indefinida: nenhuma previsão de alerta",
+            "no_positive_targets": "indefinida: sem exemplos positivos",
+            "no_positive_targets_or_alerts": "indefinida: sem positivos e sem alertas",
+            "no_negative_targets": "indefinida: sem exemplos negativos",
+            "no_evaluable_rows": "indefinida: população vazia",
+            "requires_both_classes": "indefinida: requer exemplos positivos e negativos",
+            "not_applicable_fixed_decision": "não aplicável a uma decisão fixa",
+            "zero_positive_support": "indefinida: sem exemplos positivos",
+            "zero_negative_support": "indefinida: sem exemplos negativos",
+            "empty_population": "indefinida: população vazia",
+        }
+        return reasons.get(value["reason"], f"indefinida: {value['reason']}")
+    return f"{value['value']:.2%}"
+
+
+def render_analysis_results(st: ModuleType, snapshot: AnalysisSnapshot) -> None:
+    """Render a verified fixed-rule evaluation; the dashboard never computes scores."""
+    if snapshot.manifest is None:
+        (st.error if snapshot.error else st.info)(snapshot.message)
+        st.caption("A análise é calculada separadamente em Spark e publicada como artefato imutável.")
+        return
+
+    manifest = snapshot.manifest
+    metrics = snapshot.metrics["metrics"]
+    baseline = snapshot.metrics["always_negative"]
+    counts = manifest["counts"]
+    rule = manifest["rule"]
+    if snapshot.error:
+        st.warning(snapshot.message)
+    else:
+        st.success(snapshot.message)
+    if snapshot.newer_failure:
+        st.warning(f"A análise mais recente {snapshot.newer_failure} falhou; os indicadores abaixo vêm da última análise concluída válida.")
+    st.write(f"Execução: `{manifest['analysis_run_id']}` • origem: `{manifest['source_run_id']}` • fim UTC: {manifest['finished_at']}")
+    threshold = f"{Decimal(rule['threshold_brl']):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    st.write(f"Regra fixa `{rule['rule_id']}` v{rule['rule_version']}: valor ≥ R$ {threshold} gera alerta.")
+    cols = st.columns(5)
+    for column, (label, name) in zip(cols, (("Eventos avaliados", "N"), ("Alertas", "alerts"),
+                                            ("Positivos sintéticos", "P"), ("Negativos sintéticos", "Nneg"),
+                                            ("Tempo Spark", None))):
+        value = f"{manifest['elapsed_seconds']:.2f} s" if name is None else format_count(counts[name])
+        column.metric(label, value)
+    st.caption("Reconciliação: Silver = previsões = avaliação = TP + FP + FN + TN. Rótulos são usados somente após persistir previsões.")
+
+    st.subheader("Matriz de confusão")
+    matrix = {
+        "Resultado": ["Alerta previsto", "Sem alerta previsto"],
+        "Positivo sintético": [format_count(counts["TP"]), format_count(counts["FN"])],
+        "Negativo sintético": [format_count(counts["FP"]), format_count(counts["TN"])],
+    }
+    st.dataframe(matrix, use_container_width=True, hide_index=True)
+    st.caption("TP: positivo corretamente alertado • FP: negativo alertado • FN: positivo sem alerta • TN: negativo sem alerta.")
+
+    st.subheader("Métricas da regra")
+    metric_names = (("Precisão", "precision"), ("Revocação", "recall"), ("F1", "f1"),
+                    ("Taxa de falso positivo", "fpr"), ("PR-AUC", "pr_auc"),
+                    ("Acurácia (secundária)", "accuracy"), ("Prevalência", "prevalence"),
+                    ("Taxa de alertas", "alert_rate"))
+    cols = st.columns(4)
+    for column, (label, name) in zip(cols * 2, metric_names):
+        column.metric(label, _format_metric(metrics, name))
+    baseline_metrics = baseline["metrics"]
+    st.write("**Baseline sempre negativo**")
+    st.caption(f"Acurácia { _format_metric(baseline_metrics, 'accuracy') } • precisão { _format_metric(baseline_metrics, 'precision') } • revocação { _format_metric(baseline_metrics, 'recall') } • alertas {format_count(baseline['counts']['TP'] + baseline['counts']['FP'])}")
+
+    st.subheader("Amostra de explicações")
+    examples = snapshot.summary["examples"]
+    if examples:
+        table = [{"ID sintético": item["event_id"], "Valor (BRL)": item["amount_brl"],
+                  "Alerta": "Sim" if item["predicted_suspicious"] else "Não",
+                  "Motivo": item["reason"], "Código": item["reason_code"]}
+                 for item in examples]
+        st.dataframe(table, use_container_width=True, hide_index=True)
+    else:
+        st.info("Esta avaliação válida não contém exemplos para exibir.")
+    st.warning("Dados e rótulos 100% sintéticos. Esta avaliação compara uma regra fixa com os rótulos artificiais do simulador; não comprova detecção de fraude, não mede fraude real nem demonstra generalização. Nenhum ajuste de limiar é feito nesta tela.")
 
 
 if __name__ == "__main__":

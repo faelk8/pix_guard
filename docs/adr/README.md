@@ -27,3 +27,4 @@ Copie `0000-modelo.md`, escolha o próximo número e preencha todas as seções.
 - [0003 — Dados sintéticos reproduzíveis](0003-dados-sinteticos-reproduziveis.md)
 - [0004 — Execuções locais de Spark SDP isoladas por `run_id`](0004-spark-sdp-local-runs.md) — proposta pendente de revisão.
 - [0005 — Baseline explicável e avaliação sintética da FASE 4](0005-fase4-analysis-baseline.md) — `proposed`; defaults implementados para demonstração local, aguardando decisão formal de Rafael (Issue #15).
+- [0006 — Transporte Kafka com captura durável na FASE 2](0006-fase2-kafka-streaming.md) — direção por snapshots aceita por Rafael em 2026-11-12, com publicação incremental autorizada; cliente/versionamento, retenção, limiares e demais parâmetros seguem `proposed` (Issue #23).

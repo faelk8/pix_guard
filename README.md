@@ -80,10 +80,10 @@ gerados no Kafka pertence à fase de streaming.
 
 - **FASE 0 — Arquitetura:** objetivos, limites, decisões e critérios de validação.
 - **FASE 1 — Fluxo inicial:** serviços Docker, contrato de eventos, gerador sintético, painel de progresso e Redpanda Console para inspecionar Kafka.
-- **FASE 2 — Streaming:** planejada; ligar gerador e Kafka, estudar repetição, atrasos e falhas.
-- **FASE 3 — Processamento offline:** implementada localmente; processa JSONL com Spark SDP e camadas Bronze,
+- **FASE 2 — Streaming:** arquitetura de captura Kafka em snapshots aprovada; publicação, consumo e testes produtivos ainda serão implementados.
+- **FASE 3 — Processamento offline:** integrada; processa JSONL com Spark SDP e camadas Bronze,
   Silver e Gold. Não consome Kafka.
-- **FASE 4 — Análise:** implementada localmente; baseline fixa, métricas, comparação reproduzível e painel. ML
+- **FASE 4 — Análise:** integrada; baseline fixa, métricas, comparação reproduzível e painel. ML
   não foi necessário para esta demonstração e não está implementado.
 - **FASE 5 — Operação:** integração de ponta a ponta, validações finais e guias de execução.
 

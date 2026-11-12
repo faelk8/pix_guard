@@ -1,8 +1,8 @@
 # Plano do PixGuard AI
 
-**Estado:** FASE 0, FASE 1 e o processamento offline da FASE 3 estão integrados e validados em containers. A FASE 2
-de streaming Kafka continua planejada. A FASE 4 está implementada e validada em containers como entrega separada,
-com baseline e métricas sintéticas.
+**Estado:** FASES 0, 1, 3 e 4 integradas e validadas em containers. A FASE 2 de transporte Kafka está em
+planejamento: a direção de captura em snapshots foi aprovada, mas o fluxo produtivo e o lote de 100.000
+eventos via Kafka ainda não foram implementados nem validados.
 
 ## Objetivo e escopo
 
@@ -156,7 +156,7 @@ documentação são organizadas em Pull Requests vinculadas às Issues e validad
 1. FASE 0: auditoria e plano local (concluída).
 2. Fundamental: consolidar requisitos/arquitetura (`PLAN-001`, Issue #4; concluída).
 3. FASE 1: Compose base (`INFRA-001`, Issue #1), contrato/gerador de 100 mil eventos (`GEN-001`, Issue #2), dashboard (`UI-001`, Issue #3) e Redpanda Console para inspeção visual do broker (`INFRA-002`, Issue #6).
-4. FASE 2: integrar publicação/consumo Kafka e estudar replay, idempotência, atraso/quarentena e painel de streaming; broker e Console já existem na infraestrutura da PR #8.
+4. FASE 2: planejar e integrar publicação/captura Kafka, snapshots, replay, idempotência, atraso/quarentena e painel de transporte; PLAN-004 / Issue #23 registra a arquitetura aprovada para começar. Broker e Console já existem na infraestrutura da PR #8.
 5. FASE 3: processamento SDP offline, Bronze/Silver/Gold, consulta visual e execução reproduzível.
 6. FASE 4: baseline fixa, avaliação, painel e documentação (`RULE-001` #16, `ANALYSIS-001` #17,
    `UI-003` #18 e `DOCS-003` #19); o artigo `ARTICLE-002` #20 é preparado localmente. Comparação ML somente se justificada.

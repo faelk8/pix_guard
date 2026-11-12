@@ -28,7 +28,7 @@ o broker Kafka. O gerador atual escreve JSONL; ele não envia automaticamente es
 
    Se quiser abrir somente o serviço de inspeção Kafka, rode ``docker compose up -d --wait redpanda-console``.
 
-As páginas seguintes explicam o contrato, o painel e a inspeção de mensagens.
+As páginas seguintes explicam o contrato, o painel, o processamento offline e a análise sintética.
 
 .. toctree::
    :maxdepth: 1
@@ -36,6 +36,7 @@ As páginas seguintes explicam o contrato, o painel e a inspeção de mensagens.
    contrato
    dashboard
    processamento-fase-3
+   analise-fase-4
    kafka-console
 
 Solução de problemas

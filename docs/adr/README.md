@@ -26,3 +26,4 @@ Copie `0000-modelo.md`, escolha o próximo número e preencha todas as seções.
 - [0002 — Execução em containers](0002-execucao-em-containers.md)
 - [0003 — Dados sintéticos reproduzíveis](0003-dados-sinteticos-reproduziveis.md)
 - [0004 — Execuções locais de Spark SDP isoladas por `run_id`](0004-spark-sdp-local-runs.md) — proposta pendente de revisão.
+- [0005 — Baseline explicável e avaliação sintética da FASE 4](0005-fase4-analysis-baseline.md) — `proposed`; defaults implementados para demonstração local, aguardando decisão formal de Rafael (Issue #15).

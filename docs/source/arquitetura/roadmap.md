@@ -8,8 +8,8 @@ leitor consiga relacionar uma capacidade com seus testes e evidências.
 | 0 — Arquitetura | Definir propósito, limites, arquitetura e critérios. | Concluída e documentada. |
 | 1 — Fluxo inicial | Docker, contrato de eventos, geração de 100 mil registros, painel e Console Kafka. | Implementada; testes em container passaram. |
 | 2 — Streaming | Publicar e consumir eventos em Kafka; estudar replay, atraso, duplicatas e falhas. | Planejada; gerador ainda não publica no broker, e a pipeline não lê Kafka. |
-| 3 — Processamento offline | Processar o JSONL da FASE 1 em Bronze, Silver, quarentena e Gold com Spark SDP. | Implementada e validada em containers, em entrega própria. |
-| 4 — Análise | Comparar regras explicáveis e, se justificado, modelos experimentais. | Entrega separada; não faz parte do processamento da FASE 3. |
+| 3 — Processamento offline | Processar o JSONL da FASE 1 em Bronze, Silver, quarentena e Gold com Spark SDP. | Integrada e validada em containers; não consome Kafka. |
+| 4 — Análise | Avaliar uma regra explicável fixa e mostrar métricas sintéticas; ML exige hipótese à parte. | Implementada e validada em containers como etapa separada; não comprova detecção real. |
 | 5 — Operação | Integrar o fluxo, testar ponta a ponta e consolidar guias. | Planejada. |
 
 ## Por que separar as fases?
@@ -21,6 +21,7 @@ com dados e processamento conferidos faz sentido avaliar regras ou modelos.
 Todo resultado usa dados inventados e só descreve o comportamento do simulador. As métricas não podem ser
 interpretadas como desempenho contra fraude real. A FASE 3 lê `events.jsonl` diretamente: ter um serviço Kafka
 no Compose e um Console para mensagens de demonstração não significa que o gerador esteja conectado ao broker.
+A FASE 4 também é offline e consome a Silver da FASE 3.
 
 ## O que o processamento faz
 

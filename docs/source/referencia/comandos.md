@@ -63,3 +63,23 @@ antifraude.
 
 Para encerrar os serviços sem apagar dados, execute `docker compose down`. `docker compose down -v` remove também
 `pixguard_data` e `kafka_data`.
+
+## Avaliar a regra fixa da FASE 4
+
+Gere um lote em um arquivo novo e use identificadores exclusivos para Silver e runs de análise. A sequência não
+substitui `/data/pixguard/events.jsonl`; se algum exemplo abaixo já existir no volume, use nomes livres.
+
+```bash
+docker compose --profile pipeline build pipeline
+docker compose run --rm --no-deps app pixguard generate --seed 42 --count 100000 --output /data/pixguard/events-docs-fase4.jsonl
+docker compose --profile pipeline run --rm pipeline pixguard-pipeline process --input /data/pixguard/events-docs-fase4.jsonl --run-id docs-fase4-silver
+docker compose --profile pipeline run --rm pipeline pixguard-analysis evaluate --source-run-id docs-fase4-silver --analysis-run-id docs-fase4-eval-001
+docker compose --profile pipeline run --rm pipeline pixguard-analysis evaluate --source-run-id docs-fase4-silver --analysis-run-id docs-fase4-eval-002
+docker compose --profile pipeline run --rm pipeline pixguard-analysis compare --left docs-fase4-eval-001 --right docs-fase4-eval-002
+```
+
+O comando `evaluate` grava predictions sem rótulo, associa o alvo depois e publica artefatos em
+`/data/pixguard/analysis-runs/<analysis_run_id>/`. A comparação lê os conjuntos completos em container novo.
+No lote verificado da FASE 4, ambos continham 100.000 eventos e a comparação retornou `equivalent: true`.
+Consulte o [guia da análise](../guia/analise-fase-4.md) para gerar e processar um lote, explicar a matriz e
+as métricas e conhecer a limitação de checksum histórico Silver.

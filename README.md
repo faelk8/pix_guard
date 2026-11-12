@@ -10,7 +10,8 @@ O PixGuard AI é um laboratório educacional para estudar como dados de pagament
 processados e apresentados. Ele **não processa pagamentos, não usa transações reais e não é um sistema antifraude**.
 Os eventos e rótulos são sintéticos; resultados descrevem apenas o simulador. A FASE 1 gera JSONL e mostra o
 progresso; a FASE 3 já processa esse arquivo offline com Spark Declarative Pipelines (SDP), produz camadas
-Bronze, Silver e Gold e mostra o resultado no dashboard.
+Bronze, Silver e Gold e mostra o resultado no dashboard. A FASE 4 avalia uma regra explicável sobre a Silver e
+mostra as métricas no mesmo dashboard.
 
 ## Como o projeto deve funcionar
 
@@ -19,16 +20,15 @@ Bronze, Silver e Gold e mostra o resultado no dashboard.
 3. Um pipeline, sequência de etapas de processamento, validará e organizará os dados.
 4. Na FASE 3, Spark organiza o JSONL em camadas: Bronze (linhas originais), Silver (eventos válidos e únicos) e
    Gold (agregados resumidos).
-5. O dashboard mostra o progresso do gerador e o resultado da última execução Spark concluída.
+5. Na FASE 4, uma regra didática de valor é comparada ao rótulo sintético somente depois de as previsões serem
+   persistidas sem esse rótulo.
+6. O dashboard mostra as execuções concluídas e explica a origem e os limites de cada resultado.
 
 Docker executa os serviços em containers isolados. Docker Compose descreve como iniciá-los juntos; um volume
 Docker local mantém os arquivos disponíveis para os containers. O armazenamento da primeira versão usa esse
-volume, sem MinIO ou serviço S3 separado. O processamento Spark da FASE 3 está implementado no perfil
-`pipeline`; ele lê diretamente o JSONL. A integração automática com Kafka permanece na FASE 2 planejada.
-
-A FASE 3 entrega o processamento offline em uma mudança independente; a FASE 4 mantém baseline, métricas e
-visualização em outra entrega. A FASE 2 já disponibiliza Kafka/Redpanda Console; a integração de streaming do
-gerador permanece planejada.
+volume, sem MinIO ou serviço S3 separado. O processamento Spark da FASE 3 e a avaliação da FASE 4 rodam em
+containers próprios. A FASE 3 lê diretamente o JSONL; a integração de streaming do gerador com Kafka permanece
+planejada. Kafka e Redpanda Console já estão disponíveis para inspeção e demonstração.
 
 ## Processar o lote da FASE 3
 
@@ -83,13 +83,18 @@ gerados no Kafka pertence à fase de streaming.
 - **FASE 2 — Streaming:** planejada; ligar gerador e Kafka, estudar repetição, atrasos e falhas.
 - **FASE 3 — Processamento offline:** implementada localmente; processa JSONL com Spark SDP e camadas Bronze,
   Silver e Gold. Não consome Kafka.
-- **FASE 4 — Análise:** regras explicáveis, métricas e eventual avaliação de aprendizado de máquina.
+- **FASE 4 — Análise:** implementada localmente; baseline fixa, métricas, comparação reproduzível e painel. ML
+  não foi necessário para esta demonstração e não está implementado.
 - **FASE 5 — Operação:** integração de ponta a ponta, validações finais e guias de execução.
 
 O planejamento e o histórico de validação estão em [docs/plan.md](docs/plan.md). As decisões de arquitetura ficam
 em [docs/adr/](docs/adr/), e as notas de estudo em [docs/learning-notes.md](docs/learning-notes.md). O código é
 publicado por entregas vinculadas a Issues e Pull Requests; consulte o estado de cada fase antes de usar os
 serviços descritos no plano.
+
+Para entender ou executar a análise, consulte o [guia da FASE 4](docs/source/guia/analise-fase-4.md). Os números
+perfeitos observados vêm de faixas de valores separadas de propósito no gerador: eles demonstram conformidade
+com o simulador, não capacidade de detectar fraude real.
 
 ## Portal de documentação
 

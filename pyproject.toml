@@ -8,6 +8,7 @@ packages = [{ include = "pixguard_ai", from = "src" }]
 [tool.poetry.dependencies]
 python = ">=3.12,<3.13"
 streamlit = "1.50.0"
+confluent-kafka = "2.12.2"
 
 [tool.poetry.group.test.dependencies]
 pytest = "8.4.2"

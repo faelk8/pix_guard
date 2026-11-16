@@ -1,0 +1,4 @@
+# Apply after the root compose file; project is fixed by run.sh to isolate volumes.
+services:
+  app:
+    image: pixguard-stream001-app:local

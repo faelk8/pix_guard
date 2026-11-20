@@ -170,3 +170,105 @@ def test_non_utf8_json_is_rejected(tmp_path):
     with pytest.raises(ValueError):
         publish_events("batch", source, publisher, store)
     assert not publisher.sent
+
+
+def test_new_multilevel_namespace_is_durable_before_send(tmp_path, monkeypatch):
+    from pixguard_ai.infrastructure.kafka import storage
+
+    path, _, _ = setup(tmp_path)
+    root = tmp_path / "new" / "nested" / "publications"
+    store = FilePublicationStore(root)
+    source = JsonlPublicationSource(path, store)
+    synced = []
+    actual_sync = storage.sync_directory
+
+    def observe(directory):
+        synced.append(directory)
+        actual_sync(directory)
+
+    monkeypatch.setattr(storage, "sync_directory", observe)
+    publisher = FakePublisher()
+    original_send = publisher.send
+
+    def send(*args):
+        # Parent entries are durable in top-down order before the first offer.
+        expected = [tmp_path, tmp_path / "new", tmp_path / "new" / "nested", root]
+        index = synced.index(tmp_path)
+        assert synced[index:index + len(expected)] == expected
+        assert store.directory in synced  # initial manifest directory fsync
+        original_send(*args)
+
+    publisher.send = send
+    publish_events("batch", source, publisher, store)
+    assert len(publisher.sent) == 10
+
+
+def test_concurrently_created_namespace_still_syncs_parents(tmp_path, monkeypatch):
+    from pixguard_ai.infrastructure.kafka import storage
+
+    root = tmp_path / "new" / "nested"
+    store = FilePublicationStore(root)
+    actual_mkdir = Path.mkdir
+    synced = []
+
+    def competing_mkdir(path, *args, **kwargs):
+        if path == tmp_path / "new" and not path.exists():
+            # Simulate another writer winning mkdir without having fsynced yet.
+            actual_mkdir(path)
+        return actual_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", competing_mkdir)
+    monkeypatch.setattr(storage, "sync_directory", synced.append)
+    store.reserve("batch")
+    assert synced[-3:] == [tmp_path, tmp_path / "new", root]
+    assert store.directory == root / "batch"
+
+
+def test_namespace_sync_failure_prevents_publication(tmp_path, monkeypatch):
+    from pixguard_ai.infrastructure.kafka import storage
+
+    path, _, _ = setup(tmp_path)
+    store = FilePublicationStore(tmp_path / "new" / "nested")
+    publisher = FakePublisher()
+
+    def fail(directory):
+        if directory == tmp_path:
+            raise OSError("namespace fsync failed")
+
+    monkeypatch.setattr(storage, "sync_directory", fail)
+    with pytest.raises(OSError):
+        publish_events("batch", JsonlPublicationSource(path, store), publisher, store)
+    assert not publisher.sent
+    assert store.directory is None
+
+
+def test_existing_unsynced_ancestor_is_not_assumed_durable(tmp_path, monkeypatch):
+    from pixguard_ai.infrastructure.kafka import storage
+
+    # A competing process has made A visible, but has not synced A.parent yet.
+    ancestor = tmp_path / "visible-but-unsynced"
+    ancestor.mkdir()
+    root = ancestor / "publications"
+    synced = []
+    monkeypatch.setattr(storage, "sync_directory", synced.append)
+    store = FilePublicationStore(root)
+    store.reserve("batch")
+    assert synced[-3:] == [tmp_path, ancestor, root]
+    assert synced.index(tmp_path) < synced.index(ancestor)
+
+
+def test_namespace_alias_uses_canonical_ancestor_chain(tmp_path, monkeypatch):
+    from pixguard_ai.infrastructure.kafka import storage
+
+    physical = tmp_path / "physical"
+    physical.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(physical, target_is_directory=True)
+    synced = []
+    monkeypatch.setattr(storage, "sync_directory", synced.append)
+    store = FilePublicationStore(alias / "nested" / "publications")
+    store.reserve("batch")
+    assert store.root == physical / "nested" / "publications"
+    assert store.directory == store.root / "batch"
+    assert synced[-4:] == [tmp_path, physical, physical / "nested", store.root]
+    assert alias not in synced

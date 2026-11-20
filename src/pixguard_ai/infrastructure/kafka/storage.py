@@ -21,6 +21,20 @@ def sync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def durable_directory(path: Path) -> None:
+    """Persist the entire ancestor chain, including concurrent mkdir winners.
+
+    An existing ancestor may have been created by another process that has not
+    yet synced its parent. Without a known durable anchor, walking from the
+    filesystem root is conservative and closes that race. If a filesystem denies
+    a directory fsync, reservation fails before any message can be offered.
+    """
+    absolute = path.absolute()
+    for directory in reversed((absolute, *absolute.parents[:-1])):
+        directory.mkdir(exist_ok=True)
+        sync_directory(directory.parent)
+
+
 def atomic_json(path: Path, value: object) -> None:
     """Publish a JSON document only after its bytes are durable."""
     with tempfile.NamedTemporaryFile(dir=path.parent, mode="w", delete=False) as stream:
@@ -41,14 +55,14 @@ class FilePublicationStore:
 
     def __init__(self, root: Path) -> None:
         """Choose the namespace in which batch identifiers are exclusive."""
-        self.root = root
+        self.root = root.resolve()
         self.directory: Path | None = None
 
     def reserve(self, batch_id: str) -> None:
         """Validate IDs before they become paths or transport headers."""
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", batch_id):
             raise ValueError("Invalid source batch ID")
-        self.root.mkdir(parents=True, exist_ok=True)
+        durable_directory(self.root)
         directory = self.root / batch_id
         directory.mkdir(mode=0o700)
         sync_directory(self.root)

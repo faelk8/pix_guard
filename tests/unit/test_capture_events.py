@@ -7,6 +7,7 @@ import pytest
 
 from pixguard_ai.application.capture_events import CaptureRequest, capture_events
 from pixguard_ai.infrastructure.kafka.capture_storage import CaptureStorage
+from pixguard_ai.interfaces.cli import capture_output_root
 
 
 class FakeSource:
@@ -112,6 +113,11 @@ def test_capture_without_end_freezes_high_watermark(tmp_path: Path) -> None:
                          0, 0, None, tmp_path)
     manifest = capture_events(req, FakeSource(high=4), CaptureStorage(tmp_path))
     assert manifest["end"] == 4
+
+
+def test_cli_capture_default_is_data_root(monkeypatch) -> None:
+    monkeypatch.setenv("PIXGUARD_DATA_DIR", "/data/pixguard")
+    assert capture_output_root() == Path("/data/pixguard")
 
 
 def test_segment_symlink_is_rejected_without_external_write(tmp_path: Path) -> None:

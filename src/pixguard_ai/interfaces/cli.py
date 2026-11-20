@@ -21,6 +21,11 @@ def data_directory() -> Path:
     return Path(os.environ.get("PIXGUARD_DATA_DIR", "/data/pixguard"))
 
 
+def capture_output_root() -> Path:
+    """Return the data root whose captures namespace is captures/<capture-id>."""
+    return data_directory()
+
+
 def check_storage() -> None:
     """Verify read/write access without leaving probe files in shared data."""
     directory = data_directory()
@@ -78,7 +83,7 @@ def main() -> None:
     capture.add_argument("--partition", type=int, default=0)
     capture.add_argument("--start", type=int, required=True)
     capture.add_argument("--end", type=int)
-    capture.add_argument("--output-root", type=Path, default=data_directory() / "captures")
+    capture.add_argument("--output-root", type=Path, default=capture_output_root())
     arguments = parser.parse_args()
     if arguments.command == "capture":
         from pixguard_ai.infrastructure.kafka.capture_storage import CaptureStorage

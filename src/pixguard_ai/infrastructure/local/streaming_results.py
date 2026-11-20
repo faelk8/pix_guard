@@ -39,7 +39,8 @@ def _read_json(path: Path) -> dict[str, Any]:
     """Read one bounded, symlink-free JSON manifest."""
     if path.is_symlink():
         raise ValueError("manifest is a symlink")
-    payload = path.read_bytes()
+    with path.open("rb") as stream:
+        payload = stream.read(MAX_MANIFEST_BYTES + 1)
     if len(payload) > MAX_MANIFEST_BYTES:
         raise ValueError("manifest exceeds limit")
     value = json.loads(payload, object_pairs_hook=_unique_object,
@@ -79,7 +80,8 @@ def _publication(value: object) -> dict[str, Any] | None:
         raise ValueError("publication counts are invalid")
     if value["confirmed"] + value["uncertain"] + value["not_sent"] != value["total"]:
         raise ValueError("publication counts do not reconcile")
-    if value["status"] not in {"validating", "publishing", "completed", "interrupted", "failed"}:
+    if not isinstance(value["status"], str) or value["status"] not in {
+            "validating", "publishing", "completed", "interrupted", "failed"}:
         raise ValueError("publication status is invalid")
     if value["status"] == "completed" and (value["confirmed"] != value["total"]
                                             or value["uncertain"] != 0 or value["not_sent"] != 0):
@@ -87,6 +89,9 @@ def _publication(value: object) -> dict[str, Any] | None:
     _timestamp(value["started_at"])
     if value.get("finished_at") is not None:
         _timestamp(value["finished_at"])
+    if value.get("last_confirmed_offset") is not None:
+        if not _integer(value["last_confirmed_offset"]):
+            raise ValueError("capture confirmed offset is invalid")
     if value.get("source_sha256") is not None and (
             not isinstance(value["source_sha256"], str)
             or SHA256.fullmatch(value["source_sha256"]) is None):
@@ -107,7 +112,8 @@ def _capture(value: object) -> dict[str, Any] | None:
         raise ValueError("capture manifest version is unsupported")
     if not isinstance(value["capture_id"], str) or not ID.fullmatch(value["capture_id"]):
         raise ValueError("capture ID is invalid")
-    if value["status"] not in {"capturing", "completed", "failed", "interrupted"}:
+    if not isinstance(value["status"], str) or value["status"] not in {
+            "capturing", "completed", "failed", "interrupted"}:
         raise ValueError("capture status is invalid")
     for name in ("partition", "start", "count"):
         if not _integer(value[name]):
@@ -148,7 +154,7 @@ def _snapshot(value: object) -> dict[str, Any] | None:
         raise ValueError("snapshot ID is invalid")
     if not isinstance(value["capture_id"], str) or not ID.fullmatch(value["capture_id"]):
         raise ValueError("snapshot capture ID is invalid")
-    if value["status"] != "completed":
+    if not isinstance(value["status"], str) or value["status"] != "completed":
         raise ValueError("snapshot status is invalid")
     counts = value["counts"]
     names = ("physical", "exported", "duplicates",
@@ -176,9 +182,9 @@ def _latest(directory: Path, manifest_name: str,
         return None
     candidates: list[tuple[datetime, dict[str, Any]]] = []
     invalid_manifest = False
-    directories = sorted(directory.iterdir(), key=lambda path: path.name)
-    if len(directories) > MAX_DIRECTORIES:
+    if len(list(directory.iterdir())) > MAX_DIRECTORIES:
         raise ValueError("manifest namespace exceeds directory limit")
+    directories = sorted(directory.iterdir(), key=lambda path: path.name)
     for item in directories[:MAX_DIRECTORIES]:
         if item.is_symlink() or not item.is_dir():
             continue
@@ -193,9 +199,9 @@ def _latest(directory: Path, manifest_name: str,
         except (ValueError, json.JSONDecodeError, OSError, OverflowError):
             invalid_manifest = True
             continue
+    if invalid_manifest:
+        raise ValueError("manifest namespace contains invalid metadata")
     if not candidates:
-        if invalid_manifest:
-            raise ValueError("manifest namespace contains invalid metadata")
         return None
     candidates.sort(key=lambda pair: pair[0], reverse=True)
     return candidates[0][1]
@@ -214,14 +220,20 @@ def load_latest_streaming_results(root: Path) -> StreamingSnapshot:
         invalid_snapshot = False
         captures = root / "captures"
         if captures.exists() and not captures.is_symlink():
-            capture_dirs = sorted(captures.iterdir(), key=lambda path: path.name)
-            if len(capture_dirs) > MAX_DIRECTORIES:
+            if len(list(captures.iterdir())) > MAX_DIRECTORIES:
                 raise ValueError("capture namespace exceeds limit")
+            capture_dirs = sorted(captures.iterdir(), key=lambda path: path.name)
             for capture_dir in capture_dirs[:MAX_DIRECTORIES]:
+                if capture_dir.is_symlink():
+                    invalid_snapshot = True
+                    continue
                 snapshots = capture_dir / "snapshots"
                 if snapshots.is_symlink() or not snapshots.is_dir():
                     continue
-                for snapshot_dir in snapshots.iterdir():
+                snapshot_dirs = list(snapshots.iterdir())
+                if len(snapshot_dirs) > MAX_DIRECTORIES:
+                    raise ValueError("snapshot namespace exceeds limit")
+                for snapshot_dir in snapshot_dirs[:MAX_DIRECTORIES]:
                     manifest_path = snapshot_dir / "manifest.json"
                     if snapshot_dir.is_symlink() or manifest_path.is_symlink():
                         continue

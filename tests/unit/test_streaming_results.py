@@ -133,3 +133,18 @@ def test_empty_and_duplicate_key_manifests_are_explicit(tmp_path: Path) -> None:
     )
     invalid = load_latest_streaming_results(tmp_path)
     assert invalid.publication is None and invalid.error
+
+
+def test_malformed_status_and_symlink_capture_are_fail_closed(tmp_path: Path) -> None:
+    outside = tmp_path.parent / "outside-capture"
+    outside.mkdir(exist_ok=True)
+    write_json(outside / "manifest.json", capture())
+    (tmp_path / "captures").mkdir()
+    (tmp_path / "captures" / "capture-link").symlink_to(outside, target_is_directory=True)
+    malformed = load_latest_streaming_results(tmp_path)
+    assert malformed.error
+
+    write_json(tmp_path / "publications" / "batch-1" / "manifest.json",
+               {**publication(), "status": []})
+    invalid = load_latest_streaming_results(tmp_path)
+    assert invalid.publication is None and invalid.error

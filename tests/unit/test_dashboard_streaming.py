@@ -95,4 +95,5 @@ def test_missing_or_failed_state_is_explicit_and_sanitized() -> None:
         StreamingSnapshot(publication, None, None, "Manifestos disponíveis."),
     )
     text = " ".join(dashboard.lines)
-    assert "broker payload-secret" in text
+    assert "Falha registrada no manifesto" in text
+    assert "payload-secret" not in text

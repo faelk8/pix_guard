@@ -202,12 +202,8 @@ def main() -> None:
 
 
 def _sanitize_stream_error(value: object) -> str:
-    """Bound and neutralize text read from a transport failure manifest."""
-    if not isinstance(value, str) or not value:
-        return "Nenhum"
-    cleaned = "".join(character if character.isprintable() else " " for character in value)
-    cleaned = " ".join(cleaned.split())
-    return cleaned[:200]
+    """Never echo transport error text; it can contain endpoints or secrets."""
+    return "Falha registrada no manifesto; detalhes não exibidos"
 
 
 def render_streaming_results(st: ModuleType, snapshot: StreamingSnapshot) -> None:
@@ -247,9 +243,13 @@ def render_streaming_results(st: ModuleType, snapshot: StreamingSnapshot) -> Non
                  f"faixa física: [{capture['start']}, {capture['end'] if capture['end'] is not None else 'aberta'})")
         st.metric("Coordenadas capturadas", format_count(capture["count"]))
         if capture["status"] == "capturing" and capture["end"] is not None:
-            lag_positions = max(0, capture["end"] - capture["count"] - capture["start"])
-            st.metric("Lag físico aproximado", format_count(lag_positions))
-            st.caption("Lag usa posições físicas de offset; não é latência nem atraso de event_time.")
+            confirmed = capture.get("last_confirmed_offset")
+            if type(confirmed) is int:
+                lag_positions = max(0, capture["end"] - (confirmed + 1))
+                st.metric("Lag físico de offsets", format_count(lag_positions))
+            else:
+                st.metric("Lag físico de offsets", "Não disponível")
+            st.caption("Lag usa posições físicas de offset confirmadas; não é latência nem atraso de event_time.")
         elif capture["status"] == "completed":
             st.caption("Lag não é estimado em captura concluída; a faixa foi fechada.")
         if capture.get("error") is not None:

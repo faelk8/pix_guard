@@ -87,6 +87,14 @@ def test_export_reconciles_valid_duplicate_conflict_and_quarantine(tmp_path: Pat
         capture_record(3, b"\xff", b"key"),
         capture_record(4, None, b"key"),
         capture_record(5, b"{}", b"key"),
+        capture_record(6, valid, b"\xff"),
+        capture_record(7, valid, event_id.encode(), [
+            ["source_batch_id", base64.b64encode(b"batch-1").decode()],
+            ["source_sha256", base64.b64encode(b"a" * 64).decode()],
+            ["source_ordinal", base64.b64encode(b"0").decode()],
+            ["transport_version", base64.b64encode(b"1").decode()],
+            ["transport_version", base64.b64encode(b"2").decode()],
+        ]),
     ]
     create_capture(tmp_path, records)
 
@@ -102,11 +110,11 @@ def test_export_reconciles_valid_duplicate_conflict_and_quarantine(tmp_path: Pat
     assert snapshot.joinpath("events.jsonl").exists()
     quarantine = snapshot.joinpath("quarantine.jsonl").read_bytes().splitlines()
     assert manifest["counts"] == {
-        "physical": 6,
+        "physical": 8,
         "exported": 0,
         "duplicates": 0,
-        "transport_quarantine": 2,
+        "transport_quarantine": 4,
         "contract_quarantine": 4,
     }
-    assert len(quarantine) == 6
+    assert len(quarantine) == 8
     assert manifest["reconciliation"]["passed"] is True

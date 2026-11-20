@@ -100,10 +100,15 @@ def export_capture(request: ExportRequest, reader: CaptureReader,
             continue
 
         header_map: dict[str, bytes | None] = {}
+        seen_headers: set[str] = set()
         for header in headers:
             if not isinstance(header, list) or len(header) != 2 or not isinstance(header[0], str):
                 quarantine(True, record, "invalid_headers")
                 break
+            if header[0] in seen_headers:
+                quarantine(True, record, "duplicate_transport_header")
+                break
+            seen_headers.add(header[0])
             payload = header[1]
             try:
                 decoded = None if payload is None else base64.b64decode(payload, validate=True)
@@ -123,7 +128,12 @@ def export_capture(request: ExportRequest, reader: CaptureReader,
             except Exception:
                 quarantine(True, record, "invalid_headers")
                 continue
-            if key_bytes.decode("utf-8") != str(event.event_id):
+            try:
+                key_text = key_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                quarantine(True, record, "invalid_key_utf8")
+                continue
+            if key_text != str(event.event_id):
                 quarantine(True, record, "key_event_id_mismatch")
                 continue
             canonical = json.dumps(event.to_dict(), sort_keys=True, separators=(",", ":"),

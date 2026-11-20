@@ -166,6 +166,18 @@ def test_segment_symlink_is_rejected_without_external_write(tmp_path: Path) -> N
     assert external.read_text() == "unchanged\n"
 
 
+def test_lock_symlink_is_rejected(tmp_path: Path) -> None:
+    storage = CaptureStorage(tmp_path)
+    base = tmp_path / "captures"
+    base.mkdir()
+    external = tmp_path / "external-lock"
+    external.write_text("unchanged", encoding="utf-8")
+    (base / ".capture-1.lock").symlink_to(external)
+    with pytest.raises(ValueError, match="lock is a symlink"):
+        storage.reserve(request(tmp_path, 4))
+    assert external.read_text() == "unchanged"
+
+
 def test_empty_physical_range_materializes_empty_segment(tmp_path: Path) -> None:
     storage = CaptureStorage(tmp_path)
     manifest = capture_events(request(tmp_path, 4), EmptySource(high=4), storage)

@@ -126,7 +126,16 @@ class CaptureStorage:
         self.directory.mkdir(mode=0o750, exist_ok=True)
         sync_directory(base)
         self.lock = base / f".{request.capture_id}.lock"
-        self._lock_fd = os.open(self.lock, os.O_CREAT | os.O_RDWR, 0o600)
+        if self.lock.is_symlink():
+            raise ValueError("capture lock is a symlink")
+        flags = os.O_CREAT | os.O_RDWR
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        self._lock_fd = os.open(self.lock, flags, 0o600)
+        if not stat.S_ISREG(os.fstat(self._lock_fd).st_mode):
+            os.close(self._lock_fd)
+            del self._lock_fd
+            raise ValueError("capture lock is not a regular file")
         try:
             fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

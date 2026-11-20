@@ -84,7 +84,26 @@ def main() -> None:
     capture.add_argument("--start", type=int, required=True)
     capture.add_argument("--end", type=int)
     capture.add_argument("--output-root", type=Path, default=capture_output_root())
+    export = subcommands.add_parser("export-capture", help="Export a completed capture to SDP-compatible JSONL")
+    export.add_argument("--capture-id", required=True)
+    export.add_argument("--snapshot-id", required=True)
+    export.add_argument("--output-root", type=Path, default=capture_output_root())
     arguments = parser.parse_args()
+    if arguments.command == "export-capture":
+        from pixguard_ai.application.export_capture import ExportRequest, export_capture
+        from pixguard_ai.infrastructure.local.capture_snapshot import CaptureSnapshot
+
+        try:
+            storage = CaptureSnapshot(arguments.output_root)
+            manifest = export_capture(
+                ExportRequest(arguments.capture_id, arguments.snapshot_id, arguments.output_root),
+                storage,
+                storage,
+            )
+        except Exception as error:
+            parser.exit(2, f"Capture export failed ({type(error).__name__}); inspect the snapshot.\n")
+        print(json.dumps(manifest, sort_keys=True))
+        return
     if arguments.command == "capture":
         from pixguard_ai.infrastructure.kafka.capture_storage import CaptureStorage
 

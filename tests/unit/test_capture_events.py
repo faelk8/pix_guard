@@ -97,6 +97,28 @@ def test_resolved_end_is_not_recalculated(tmp_path: Path) -> None:
     assert state["fixed_end"] == 3
 
 
+def test_capture_without_end_freezes_high_watermark(tmp_path: Path) -> None:
+    req = CaptureRequest("capture-open", "cluster-1", "pixguard.payment_event_v1",
+                         0, 0, None, tmp_path)
+    manifest = capture_events(req, FakeSource(high=4), CaptureStorage(tmp_path))
+    assert manifest["end"] == 4
+
+
+def test_segment_symlink_is_rejected_without_external_write(tmp_path: Path) -> None:
+    storage = CaptureStorage(tmp_path)
+    storage.reserve(request(tmp_path, 4))
+    external = tmp_path / "external.jsonl"
+    external.write_text("unchanged\n", encoding="utf-8")
+    storage.segment.symlink_to(external)
+    with pytest.raises(ValueError, match="symlink"):
+        storage.append({
+            "topic": "pixguard.payment_event_v1", "partition": 0, "offset": 0,
+            "key_base64": "a2V5", "value_base64": "dmFsdWU=",
+            "headers": [], "timestamp": 1700000000000,
+        })
+    assert external.read_text() == "unchanged\n"
+
+
 @pytest.mark.parametrize(
     ("source", "message"),
     [

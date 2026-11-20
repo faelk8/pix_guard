@@ -86,7 +86,9 @@ def capture_events(request: CaptureRequest, source: CaptureSource, storage: Capt
             storage.close()
         raise
     low, high = source.watermarks(request.partition)
-    end = request.end if request.end is not None else int(state.get("fixed_end", high))
+    persisted_end = state.get("fixed_end")
+    end = request.end if request.end is not None else (
+        int(persisted_end) if persisted_end is not None else high)
     if hasattr(storage, "fix_end"):
         storage.fix_end(end)
     if end > high:

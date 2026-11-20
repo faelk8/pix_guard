@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import tempfile
 from typing import Any
 
@@ -65,8 +66,18 @@ def atomic_json(path: Path, value: object) -> None:
         os.fsync(stream.fileno())
     try:
         os.replace(temporary, path)
+        sync_directory(path.parent)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def sync_directory(path: Path) -> None:
+    """Fsync a directory entry after file creation or rename."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def digest(path: Path) -> str:
@@ -107,10 +118,13 @@ class CaptureStorage:
         if base.is_symlink():
             raise ValueError("capture namespace is a symlink")
         base.mkdir(mode=0o750, exist_ok=True)
+        sync_directory(self.root)
+        sync_directory(base)
         self.directory = base / request.capture_id
         if self.directory.is_symlink():
             raise ValueError("capture directory is a symlink")
         self.directory.mkdir(mode=0o750, exist_ok=True)
+        sync_directory(base)
         self.lock = base / f".{request.capture_id}.lock"
         self._lock_fd = os.open(self.lock, os.O_CREAT | os.O_RDWR, 0o600)
         try:
@@ -177,9 +191,24 @@ class CaptureStorage:
         stored = dict(record)
         stored["checksum_sha256"] = sha256(canonical(record)).hexdigest()
         payload = canonical(stored)
-        with self.segment.open("ab", buffering=0) as stream:
-            stream.write(payload + b"\n")
-            os.fsync(stream.fileno())
+        if self.segment.is_symlink():
+            raise ValueError("capture segment is a symlink")
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(self.segment, flags, 0o640)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ValueError("capture segment is not a regular file")
+            stream = os.fdopen(descriptor, "ab", buffering=0, closefd=False)
+            try:
+                stream.write(payload + b"\n")
+                os.fsync(descriptor)
+            finally:
+                stream.close()
+        finally:
+            os.close(descriptor)
+        sync_directory(self.directory)
 
     def fix_end(self, end: int) -> None:
         """Freeze the resolved upper bound before offering records to Kafka."""

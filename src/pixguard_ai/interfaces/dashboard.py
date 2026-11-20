@@ -20,6 +20,10 @@ from pixguard_ai.infrastructure.local.analysis_results import (
     AnalysisSnapshot,
     load_latest_analysis_results,
 )
+from pixguard_ai.infrastructure.local.streaming_results import (
+    StreamingSnapshot,
+    load_latest_streaming_results,
+)
 
 
 MAX_MANIFEST_BYTES = 65_536
@@ -191,6 +195,80 @@ def main() -> None:
     st.header("Avaliação da regra — FASE 4")
     render_analysis_results(st, load_latest_analysis_results(Path(os.environ.get(
         "PIXGUARD_DATA_DIR", "/data/pixguard"))))
+    st.divider()
+    st.header("Transporte Kafka — FASE 2")
+    render_streaming_results(st, load_latest_streaming_results(Path(os.environ.get(
+        "PIXGUARD_DATA_DIR", "/data/pixguard"))))
+
+
+def _sanitize_stream_error(value: object) -> str:
+    """Bound and neutralize text read from a transport failure manifest."""
+    if not isinstance(value, str) or not value:
+        return "Nenhum"
+    cleaned = "".join(character if character.isprintable() else " " for character in value)
+    cleaned = " ".join(cleaned.split())
+    return cleaned[:200]
+
+
+def render_streaming_results(st: ModuleType, snapshot: StreamingSnapshot) -> None:
+    """Render bounded Kafka stage manifests without reading payloads or segments."""
+    if snapshot.publication is None and snapshot.capture is None and snapshot.snapshot is None:
+        (st.error if snapshot.error else st.info)(snapshot.message)
+        st.caption("Nenhum manifesto parcial é convertido em sucesso.")
+        return
+    st.success(snapshot.message)
+
+    publication = snapshot.publication
+    if publication is not None:
+        st.subheader("Publicação")
+        status_labels = {
+            "validating": "Validando",
+            "publishing": "Publicando",
+            "completed": "Concluído",
+            "interrupted": "Interrompido",
+            "failed": "Falhou",
+        }
+        st.write(f"Estado: {status_labels[publication['status']]} • lote: `{publication['source_batch_id']}`")
+        columns = st.columns(4)
+        labels = ("Produzidos", "Confirmados", "Incertos", "Não enviados")
+        names = ("total", "confirmed", "uncertain", "not_sent")
+        for column, label, name in zip(columns, labels, names):
+            column.metric(label, format_count(publication[name]))
+        if publication["status"] != "completed":
+            st.warning("A publicação ainda não é concluída; contagens incertas não são sucesso.")
+        if publication.get("error") is not None:
+            st.write(f"Erro sanitizado: {_sanitize_stream_error(publication['error'])}")
+
+    capture = snapshot.capture
+    if capture is not None:
+        st.subheader("Captura")
+        st.write(f"Estado: {capture['status']} • captura: `{capture['capture_id']}`")
+        st.write(f"Tópico: `{capture['topic']}` • partição: {capture['partition']} • "
+                 f"faixa física: [{capture['start']}, {capture['end'] if capture['end'] is not None else 'aberta'})")
+        st.metric("Coordenadas capturadas", format_count(capture["count"]))
+        if capture["status"] == "capturing" and capture["end"] is not None:
+            lag_positions = max(0, capture["end"] - capture["count"] - capture["start"])
+            st.metric("Lag físico aproximado", format_count(lag_positions))
+            st.caption("Lag usa posições físicas de offset; não é latência nem atraso de event_time.")
+        elif capture["status"] == "completed":
+            st.caption("Lag não é estimado em captura concluída; a faixa foi fechada.")
+        if capture.get("error") is not None:
+            st.write(f"Erro sanitizado: {_sanitize_stream_error(capture['error'])}")
+
+    exported = snapshot.snapshot
+    if exported is not None:
+        st.subheader("Snapshot exportado")
+        st.write(f"Snapshot: `{exported['snapshot_id']}` • captura: `{exported['capture_id']}`")
+        counts = exported["counts"]
+        columns = st.columns(5)
+        labels = ("Físicas", "Exportadas", "Duplicatas", "Quarentena transporte",
+                  "Quarentena contrato")
+        names = ("physical", "exported", "duplicates",
+                 "transport_quarantine", "contract_quarantine")
+        for column, label, name in zip(columns, labels, names):
+            column.metric(label, format_count(counts[name]))
+        st.caption("Reconciliação: físicas = exportadas + duplicatas + quarentena transporte + quarentena contrato.")
+        st.write(f"Conclusão UTC: {exported['finished_at']}")
 
 
 def render_pipeline_results(st: ModuleType, snapshot: PipelineSnapshot) -> None:

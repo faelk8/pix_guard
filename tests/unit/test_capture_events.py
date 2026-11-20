@@ -178,6 +178,31 @@ def test_lock_symlink_is_rejected(tmp_path: Path) -> None:
     assert external.read_text() == "unchanged"
 
 
+def test_append_retries_short_writes_and_persists_full_record(tmp_path: Path, monkeypatch) -> None:
+    storage = CaptureStorage(tmp_path)
+    storage.reserve(request(tmp_path, 4))
+    real_write = os.write
+    calls = {"short": True}
+
+    def short_then_full(descriptor: int, data: bytes) -> int:
+        if calls["short"]:
+            calls["short"] = False
+            count = min(8, len(data))
+            real_write(descriptor, data[:count])
+            return count
+        return real_write(descriptor, data)
+
+    monkeypatch.setattr("pixguard_ai.infrastructure.kafka.capture_storage.os.write", short_then_full)
+    storage.append({
+        "topic": "pixguard.payment_event_v1", "partition": 0, "offset": 0,
+        "key_base64": "a2V5", "value_base64": "dmFsdWU=",
+        "headers": [], "timestamp": 1700000000000,
+    })
+    lines = storage.segment.read_bytes().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["offset"] == 0
+
+
 def test_empty_physical_range_materializes_empty_segment(tmp_path: Path) -> None:
     storage = CaptureStorage(tmp_path)
     manifest = capture_events(request(tmp_path, 4), EmptySource(high=4), storage)

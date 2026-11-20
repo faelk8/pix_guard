@@ -218,12 +218,14 @@ class CaptureStorage:
         try:
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 raise ValueError("capture segment is not a regular file")
-            stream = os.fdopen(descriptor, "ab", buffering=0, closefd=False)
-            try:
-                stream.write(payload + b"\n")
-                os.fsync(descriptor)
-            finally:
-                stream.close()
+            data = payload + b"\n"
+            written = 0
+            while written < len(data):
+                count = os.write(descriptor, data[written:])
+                if count is None or count <= 0:
+                    raise OSError("capture segment write made no progress")
+                written += count
+            os.fsync(descriptor)
         finally:
             os.close(descriptor)
         sync_directory(self.directory)

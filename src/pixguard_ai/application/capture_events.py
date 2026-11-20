@@ -53,6 +53,10 @@ class CaptureStorage(Protocol):
         """Freeze the resolved upper bound in storage."""
         ...
 
+    def close(self) -> None:
+        """Release the exclusive capture lock."""
+        ...
+
     def append(self, record: dict[str, Any]) -> None:
         """Fsync one raw Kafka record before the Kafka offset is confirmed."""
         ...
@@ -75,9 +79,14 @@ def capture_events(request: CaptureRequest, source: CaptureSource, storage: Capt
     if source.identity() != request.cluster_id:
         raise ValueError("Kafka cluster identity mismatch")
 
-    state = storage.reserve(request)
+    try:
+        state = storage.reserve(request)
+    except BaseException:
+        if hasattr(storage, "close"):
+            storage.close()
+        raise
     low, high = source.watermarks(request.partition)
-    end = request.end if request.end is not None else high
+    end = request.end if request.end is not None else int(state.get("fixed_end", high))
     if hasattr(storage, "fix_end"):
         storage.fix_end(end)
     if end > high:
@@ -90,10 +99,17 @@ def capture_events(request: CaptureRequest, source: CaptureSource, storage: Capt
     resume_offset = int(state.get("next_offset", request.start))
     start = max(request.start, resume_offset)
     if start >= end:
-        return storage.complete(int(state.get("count", 0)))
+        result = storage.complete(int(state.get("count", 0)))
+        if hasattr(storage, "close"):
+            storage.close()
+        return result
     committed = source.committed(request.partition)
     if committed is not None and committed > start:
         raise ValueError("capture consumer group is already ahead of requested start")
     count = source.capture(start, end, storage.append)
     count += int(state.get("count", 0))
-    return storage.complete(count)
+    try:
+        return storage.complete(count)
+    finally:
+        if hasattr(storage, "close"):
+            storage.close()

@@ -21,6 +21,7 @@ class KafkaCaptureSource:
             "group.id": f"pixguard.capture.{capture_id}",
             "enable.auto.commit": False,
             "enable.auto.offset.store": False,
+            "enable.partition.eof": True,
             "auto.offset.reset": "error",
             "allow.auto.create.topics": False,
         })
@@ -59,19 +60,17 @@ class KafkaCaptureSource:
         self._consumer.assign([TopicPartition(self.topic, self.partition, start)])
         count = 0
         deadline = time.monotonic() + 30
-        while count < end - start and time.monotonic() < deadline:
+        while time.monotonic() < deadline:
             message = self._consumer.poll(1)
             if message is None:
                 continue
             error = message.error()
             if error is not None:
                 if error.code() == KafkaError._PARTITION_EOF:
-                    raise ValueError("Kafka partition ended before capture range")
+                    break
                 raise RuntimeError(f"Kafka read failed: {error}")
             if message.offset() >= end:
                 break
-            if message.offset() != start + count:
-                raise ValueError("Kafka capture offset gap")
             key = message.key()
             value = message.value()
             if key is None or value is None:
@@ -90,9 +89,13 @@ class KafkaCaptureSource:
             committed = self._consumer.commit(message=message, asynchronous=False)
             if committed is None:
                 raise RuntimeError("Kafka offset commit was not confirmed")
+            if isinstance(committed, (list, tuple)):
+                failed = [item for item in committed if getattr(item, "err", None) is not None]
+                if failed:
+                    raise RuntimeError("Kafka offset commit returned a partition error")
             count += 1
-        if count != end - start:
-            raise ValueError("Kafka capture timed out before fixed range completed")
+        if time.monotonic() >= deadline:
+            raise ValueError("Kafka capture timed out before fixed upper bound")
         return count
 
     def close(self) -> None:

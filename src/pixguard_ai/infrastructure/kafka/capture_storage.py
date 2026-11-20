@@ -2,6 +2,7 @@
 
 import base64
 from datetime import datetime, timezone
+import fcntl
 from hashlib import sha256
 import json
 import os
@@ -103,12 +104,20 @@ class CaptureStorage:
             raise ValueError("invalid Kafka end offset")
 
         base = self.root / "captures"
+        if base.is_symlink():
+            raise ValueError("capture namespace is a symlink")
         base.mkdir(mode=0o750, exist_ok=True)
         self.directory = base / request.capture_id
+        if self.directory.is_symlink():
+            raise ValueError("capture directory is a symlink")
         self.directory.mkdir(mode=0o750, exist_ok=True)
         self.lock = base / f".{request.capture_id}.lock"
-        fd = os.open(self.lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        os.close(fd)
+        self._lock_fd = os.open(self.lock, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(self._lock_fd)
+            raise FileExistsError("capture is already active")
         self.segment = self.directory / "records.jsonl"
         self.request = request
 
@@ -119,14 +128,13 @@ class CaptureStorage:
                         manifest.get("partition"), manifest.get("start"))
             expected = (request.cluster_id, request.topic, request.partition, request.start)
             if identity != expected:
-                self.lock.unlink(missing_ok=True)
                 raise ValueError("capture identity or range mismatch")
             if manifest.get("status") == "completed":
                 if manifest.get("end") != request.end and request.end is not None:
-                    self.lock.unlink(missing_ok=True)
                     raise ValueError("completed capture range mismatch")
-                self.lock.unlink(missing_ok=True)
-                return {"next_offset": manifest["end"], "count": manifest["count"]}
+                self.close()
+                return {"next_offset": manifest["end"], "count": manifest["count"],
+                        "fixed_end": manifest["end"]}
             if manifest.get("status") != "capturing":
                 raise ValueError("unsupported capture manifest status")
 
@@ -151,11 +159,13 @@ class CaptureStorage:
             if seen:
                 if seen != sorted(seen) or len(set(seen)) != len(seen):
                     raise ValueError("capture segment offsets are not ordered and unique")
-                if seen != list(range(request.start, seen[-1] + 1)):
-                    raise ValueError("capture segment is not contiguous")
+                if any(offset < request.start for offset in seen):
+                    raise ValueError("capture segment offset is below start")
                 next_offset = seen[-1] + 1
                 count = len(seen)
-        return {"next_offset": next_offset, "count": count}
+        fixed_end = manifest_path.exists()
+        fixed_end = read_json(manifest_path).get("end") if fixed_end else request.end
+        return {"next_offset": next_offset, "count": count, "fixed_end": fixed_end}
 
     def append(self, record: dict[str, Any]) -> None:
         """Append and fsync one raw record before Kafka offset commit."""
@@ -180,6 +190,13 @@ class CaptureStorage:
         manifest["end"] = end
         atomic_json(manifest_path, manifest)
 
+    def close(self) -> None:
+        """Release the advisory lock; crash/kernel close performs the same action."""
+        if hasattr(self, "_lock_fd"):
+            fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+            os.close(self._lock_fd)
+            del self._lock_fd
+
     def confirmed(self, offset: int) -> None:
         """Persist the confirmed offset after storage fsync."""
         manifest_path = self.directory / "manifest.json"
@@ -199,7 +216,8 @@ class CaptureStorage:
             for line in self.segment.read_bytes().splitlines():
                 record = json.loads(line, object_pairs_hook=unique_object)
                 offsets.append(record["offset"])
-        if offsets != list(range(manifest["start"], end)) or len(offsets) != count:
+        if (len(offsets) != count or len(set(offsets)) != len(offsets)
+                or any(offset < manifest["start"] or offset >= end for offset in offsets)):
             raise ValueError("captured offsets do not reconcile")
         manifest.update({
             "status": "completed", "end": end, "count": count,
@@ -209,7 +227,7 @@ class CaptureStorage:
             },
         })
         atomic_json(manifest_path, manifest)
-        self.lock.unlink(missing_ok=True)
+        self.close()
         return manifest
 
     def verify_replay(self, topic: str, partition: int, start: int, end: int) -> dict[str, Any]:
@@ -230,6 +248,7 @@ class CaptureStorage:
                                   if key != "checksum_sha256"})).hexdigest() != record["checksum_sha256"]:
                 raise ValueError("capture record checksum mismatch")
             offsets.append(record["offset"])
-        if offsets != list(range(start, end)):
+        if (len(set(offsets)) != len(offsets)
+                or any(offset < start or offset >= end for offset in offsets)):
             raise ValueError("capture replay offsets do not reconcile")
         return manifest

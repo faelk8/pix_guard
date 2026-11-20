@@ -71,6 +71,32 @@ def test_capture_resume_finishes_contiguous_segment(tmp_path: Path) -> None:
     assert state["next_offset"] == 1
 
 
+def test_sparse_offsets_are_physical_and_preserve_count(tmp_path: Path) -> None:
+    storage = CaptureStorage(tmp_path)
+    storage.reserve(request(tmp_path, 4))
+    for offset in (0, 2):
+        storage.append({
+            "topic": "pixguard.payment_event_v1", "partition": 0, "offset": offset,
+            "key_base64": "a2V5", "value_base64": "dmFsdWU=",
+            "headers": [], "timestamp": 1700000000000,
+        })
+    manifest = storage.complete(2)
+    assert manifest["count"] == 2
+    assert [json.loads(line)["offset"] for line in
+            (tmp_path / "captures" / "capture-1" / "records.jsonl").read_text().splitlines()] == [0, 2]
+
+
+def test_resolved_end_is_not_recalculated(tmp_path: Path) -> None:
+    storage = CaptureStorage(tmp_path)
+    req = CaptureRequest("capture-end", "cluster-1", "pixguard.payment_event_v1",
+                         0, 0, None, tmp_path)
+    storage.reserve(req)
+    storage.fix_end(3)
+    storage.close()
+    state = storage.reserve(req)
+    assert state["fixed_end"] == 3
+
+
 @pytest.mark.parametrize(
     ("source", "message"),
     [

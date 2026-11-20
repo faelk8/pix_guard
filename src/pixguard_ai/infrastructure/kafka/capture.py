@@ -73,16 +73,15 @@ class KafkaCaptureSource:
                 break
             key = message.key()
             value = message.value()
-            if key is None or value is None:
-                raise ValueError("Kafka capture record has missing key or value")
-            headers = [(name, bytes(payload)) for name, payload in (message.headers() or [])]
+            headers = [(name, None if payload is None else bytes(payload))
+                       for name, payload in (message.headers() or [])]
             on_record({
                 "topic": message.topic(),
                 "partition": message.partition(),
                 "offset": message.offset(),
-                "key_base64": __import__("base64").b64encode(key).decode("ascii"),
-                "value_base64": __import__("base64").b64encode(value).decode("ascii"),
-                "headers": [[name, __import__("base64").b64encode(payload).decode("ascii")]
+                "key_base64": None if key is None else __import__("base64").b64encode(key).decode("ascii"),
+                "value_base64": None if value is None else __import__("base64").b64encode(value).decode("ascii"),
+                "headers": [[name, None if payload is None else __import__("base64").b64encode(payload).decode("ascii")]
                             for name, payload in headers],
                 "timestamp": message.timestamp()[1],
             })

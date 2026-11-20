@@ -164,8 +164,15 @@ class CaptureStorage:
         next_offset = request.start
         count = 0
         if self.segment.exists():
+            raw_segment = self.segment.read_bytes()
+            if raw_segment and not raw_segment.endswith(b"\n"):
+                with self.segment.open("r+b", buffering=0) as stream:
+                    stream.truncate(raw_segment.rfind(b"\n") + 1)
+                    os.fsync(stream.fileno())
+                sync_directory(self.directory)
+                raw_segment = self.segment.read_bytes()
             seen: list[int] = []
-            for line in self.segment.read_bytes().splitlines():
+            for line in raw_segment.splitlines():
                 record = json.loads(line, object_pairs_hook=unique_object)
                 if record["partition"] != request.partition or record["topic"] != request.topic:
                     raise ValueError("capture segment identity mismatch")
@@ -186,8 +193,10 @@ class CaptureStorage:
         required = {"topic", "partition", "offset", "key_base64", "value_base64", "headers", "timestamp"}
         if not required <= record.keys():
             raise ValueError("capture record is incomplete")
-        base64.b64decode(record["key_base64"], validate=True)
-        base64.b64decode(record["value_base64"], validate=True)
+        if record["key_base64"] is not None:
+            base64.b64decode(record["key_base64"], validate=True)
+        if record["value_base64"] is not None:
+            base64.b64decode(record["value_base64"], validate=True)
         stored = dict(record)
         stored["checksum_sha256"] = sha256(canonical(record)).hexdigest()
         payload = canonical(stored)

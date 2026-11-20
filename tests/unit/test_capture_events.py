@@ -1,6 +1,7 @@
 """Unit coverage for bounded, resumable Kafka capture accounting."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -118,6 +119,36 @@ def test_capture_without_end_freezes_high_watermark(tmp_path: Path) -> None:
 def test_cli_capture_default_is_data_root(monkeypatch) -> None:
     monkeypatch.setenv("PIXGUARD_DATA_DIR", "/data/pixguard")
     assert capture_output_root() == Path("/data/pixguard")
+
+
+def test_capture_accepts_null_key_and_value(tmp_path: Path) -> None:
+    storage = CaptureStorage(tmp_path)
+    storage.reserve(request(tmp_path, 1))
+    storage.append({
+        "topic": "pixguard.payment_event_v1", "partition": 0, "offset": 0,
+        "key_base64": None, "value_base64": None,
+        "headers": [["type", None]], "timestamp": 1700000000000,
+    })
+    manifest = storage.complete(1)
+    assert manifest["count"] == 1
+
+
+def test_partial_jsonl_tail_is_truncated_on_resume(tmp_path: Path) -> None:
+    storage = CaptureStorage(tmp_path)
+    storage.reserve(request(tmp_path, 4))
+    storage.append({
+        "topic": "pixguard.payment_event_v1", "partition": 0, "offset": 0,
+        "key_base64": "a2V5", "value_base64": "dmFsdWU=",
+        "headers": [], "timestamp": 1700000000000,
+    })
+    storage.lock.unlink(missing_ok=True)
+    with storage.segment.open("ab") as stream:
+        stream.write(b'{"offset":')
+        stream.flush()
+        os.fsync(stream.fileno())
+    resumed = CaptureStorage(tmp_path)
+    state = resumed.reserve(request(tmp_path, 4))
+    assert state["next_offset"] == 1
 
 
 def test_segment_symlink_is_rejected_without_external_write(tmp_path: Path) -> None:

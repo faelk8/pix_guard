@@ -240,6 +240,18 @@ class CaptureStorage:
         end = manifest["end"]
         if end is None:
             raise ValueError("fixed end offset was not resolved")
+        if not self.segment.exists():
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(self.segment, flags, 0o640)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            sync_directory(self.directory)
+        if self.segment.is_symlink():
+            raise ValueError("capture segment is a symlink")
         offsets = []
         if self.segment.exists():
             for line in self.segment.read_bytes().splitlines():

@@ -39,6 +39,16 @@ class FakeSource:
         return None
 
 
+class FailingSource(FakeSource):
+    def capture(self, start: int, end: int, on_record) -> int:
+        raise RuntimeError("capture interrupted")
+
+
+class EmptySource(FakeSource):
+    def capture(self, start: int, end: int, on_record) -> int:
+        return 0
+
+
 def request(root: Path, end: int | None = 4) -> CaptureRequest:
     return CaptureRequest("capture-1", "cluster-1", "pixguard.payment_event_v1",
                           0, 0, end, root)
@@ -117,6 +127,26 @@ def test_segment_symlink_is_rejected_without_external_write(tmp_path: Path) -> N
             "headers": [], "timestamp": 1700000000000,
         })
     assert external.read_text() == "unchanged\n"
+
+
+def test_empty_physical_range_materializes_empty_segment(tmp_path: Path) -> None:
+    storage = CaptureStorage(tmp_path)
+    manifest = capture_events(request(tmp_path, 4), EmptySource(high=4), storage)
+    segment = tmp_path / "captures" / "capture-1" / "records.jsonl"
+    assert manifest["status"] == "completed"
+    assert manifest["count"] == 0
+    assert segment.exists()
+    assert segment.stat().st_size == 0
+
+
+def test_capture_failure_releases_lock_for_same_process_retry(tmp_path: Path) -> None:
+    req = request(tmp_path, 4)
+    storage = CaptureStorage(tmp_path)
+    with pytest.raises(RuntimeError, match="capture interrupted"):
+        capture_events(req, FailingSource(), storage)
+    retry = CaptureStorage(tmp_path)
+    manifest = capture_events(req, FakeSource(), retry)
+    assert manifest["status"] == "completed"
 
 
 @pytest.mark.parametrize(

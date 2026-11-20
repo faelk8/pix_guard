@@ -85,32 +85,29 @@ def capture_events(request: CaptureRequest, source: CaptureSource, storage: Capt
         if hasattr(storage, "close"):
             storage.close()
         raise
-    low, high = source.watermarks(request.partition)
-    persisted_end = state.get("fixed_end")
-    end = request.end if request.end is not None else (
-        int(persisted_end) if persisted_end is not None else high)
-    if hasattr(storage, "fix_end"):
-        storage.fix_end(end)
-    if end > high:
-        raise ValueError("capture end exceeds available high watermark")
-    if request.start < low:
-        raise ValueError("capture start is before available low watermark")
-    if request.start >= end:
-        raise ValueError("capture range must be non-empty")
-
-    resume_offset = int(state.get("next_offset", request.start))
-    start = max(request.start, resume_offset)
-    if start >= end:
-        result = storage.complete(int(state.get("count", 0)))
-        if hasattr(storage, "close"):
-            storage.close()
-        return result
-    committed = source.committed(request.partition)
-    if committed is not None and committed > start:
-        raise ValueError("capture consumer group is already ahead of requested start")
-    count = source.capture(start, end, storage.append)
-    count += int(state.get("count", 0))
     try:
+        low, high = source.watermarks(request.partition)
+        persisted_end = state.get("fixed_end")
+        end = request.end if request.end is not None else (
+            int(persisted_end) if persisted_end is not None else high)
+        if hasattr(storage, "fix_end"):
+            storage.fix_end(end)
+        if end > high:
+            raise ValueError("capture end exceeds available high watermark")
+        if request.start < low:
+            raise ValueError("capture start is before available low watermark")
+        if request.start >= end:
+            raise ValueError("capture range must be non-empty")
+
+        resume_offset = int(state.get("next_offset", request.start))
+        start = max(request.start, resume_offset)
+        if start >= end:
+            return storage.complete(int(state.get("count", 0)))
+        committed = source.committed(request.partition)
+        if committed is not None and committed > start:
+            raise ValueError("capture consumer group is already ahead of requested start")
+        count = source.capture(start, end, storage.append)
+        count += int(state.get("count", 0))
         return storage.complete(count)
     finally:
         if hasattr(storage, "close"):

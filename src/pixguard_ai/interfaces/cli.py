@@ -10,6 +10,8 @@ import tempfile
 import threading
 
 from pixguard_ai.application.generate_events import GenerationConfig, generate_events
+from pixguard_ai.application.capture_events import CaptureRequest, capture_events
+from pixguard_ai.infrastructure.kafka.capture import KafkaCaptureSource
 from pixguard_ai.infrastructure.synthetic.generator import SyntheticEventSource
 from pixguard_ai.infrastructure.synthetic.jsonl import JsonlEventWriter
 
@@ -17,6 +19,11 @@ from pixguard_ai.infrastructure.synthetic.jsonl import JsonlEventWriter
 def data_directory() -> Path:
     """Return the configured shared storage directory."""
     return Path(os.environ.get("PIXGUARD_DATA_DIR", "/data/pixguard"))
+
+
+def capture_output_root() -> Path:
+    """Return the data root whose captures namespace is captures/<capture-id>."""
+    return data_directory()
 
 
 def check_storage() -> None:
@@ -70,7 +77,40 @@ def main() -> None:
     publisher.add_argument("--batch-id", required=True)
     publisher.add_argument("--output-root", type=Path, default=data_directory() / "publications")
     publisher.add_argument("--timeout", type=float, default=60.0)
+    capture = subcommands.add_parser("capture", help="Capture a fixed Kafka offset range")
+    capture.add_argument("--capture-id", required=True)
+    capture.add_argument("--topic", default=os.environ.get("PIXGUARD_KAFKA_TOPIC", "pixguard.payment_event_v1"))
+    capture.add_argument("--partition", type=int, default=0)
+    capture.add_argument("--start", type=int, required=True)
+    capture.add_argument("--end", type=int)
+    capture.add_argument("--output-root", type=Path, default=capture_output_root())
     arguments = parser.parse_args()
+    if arguments.command == "capture":
+        from pixguard_ai.infrastructure.kafka.capture_storage import CaptureStorage
+
+        try:
+            bootstrap = os.environ.get("PIXGUARD_KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+            source = KafkaCaptureSource(bootstrap, arguments.capture_id, arguments.topic, arguments.partition)
+            cluster_id = source.identity()
+            request = CaptureRequest(
+                capture_id=arguments.capture_id,
+                cluster_id=cluster_id,
+                topic=arguments.topic,
+                partition=arguments.partition,
+                start=arguments.start,
+                end=arguments.end,
+                data_root=arguments.output_root,
+            )
+            manifest = capture_events(request, source, CaptureStorage(arguments.output_root))
+        except KeyboardInterrupt:
+            parser.exit(130, "Capture interrupted; persisted records and manifest can be resumed.\n")
+        except Exception as error:
+            parser.exit(2, f"Capture failed ({type(error).__name__}); inspect its manifest.\n")
+        finally:
+            if "source" in locals():
+                source.close()
+        print(json.dumps(manifest, sort_keys=True))
+        return
     if arguments.command == "publish":
         from pixguard_ai.application.publish_events import publish_events
         from pixguard_ai.infrastructure.kafka.producer import KafkaPublisher

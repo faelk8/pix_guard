@@ -236,11 +236,22 @@ def load_latest_streaming_results(root: Path) -> StreamingSnapshot:
                 for snapshot_dir in snapshot_dirs[:MAX_DIRECTORIES]:
                     manifest_path = snapshot_dir / "manifest.json"
                     if snapshot_dir.is_symlink() or manifest_path.is_symlink():
+                        invalid_snapshot = True
                         continue
                     if not manifest_path.is_file():
                         continue
                     try:
                         value = _snapshot(_read_json(manifest_path))
+                        if capture is not None:
+                            if value["capture_id"] != capture["capture_id"]:
+                                raise ValueError("snapshot capture identity mismatch")
+                            provenance = value["capture"]
+                            if (provenance.get("cluster_id") != capture["cluster_id"]
+                                    or provenance.get("topic") != capture["topic"]
+                                    or provenance.get("partition") != capture["partition"]
+                                    or provenance.get("start") != capture["start"]
+                                    or provenance.get("end") != capture["end"]):
+                                raise ValueError("snapshot capture provenance mismatch")
                         snapshot_candidates.append((_timestamp(value["finished_at"]), value))
                     except (ValueError, json.JSONDecodeError, OSError, OverflowError):
                         invalid_snapshot = True

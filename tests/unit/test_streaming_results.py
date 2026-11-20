@@ -148,3 +148,17 @@ def test_malformed_status_and_symlink_capture_are_fail_closed(tmp_path: Path) ->
                {**publication(), "status": []})
     invalid = load_latest_streaming_results(tmp_path)
     assert invalid.publication is None and invalid.error
+
+
+def test_snapshot_must_match_presented_capture(tmp_path: Path) -> None:
+    write_json(tmp_path / "captures" / "capture-1" / "manifest.json", capture())
+    mismatched = snapshot()
+    mismatched["capture_id"] = "capture-other"
+    mismatched["capture"]["cluster_id"] = "cluster-other"
+    write_json(
+        tmp_path / "captures" / "capture-1" / "snapshots" / "snapshot-1" / "manifest.json",
+        mismatched,
+    )
+    result = load_latest_streaming_results(tmp_path)
+    assert result.snapshot is None
+    assert result.error

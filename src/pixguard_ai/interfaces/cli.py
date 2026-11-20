@@ -65,7 +65,41 @@ def main() -> None:
     generator.add_argument("--seed", type=int, default=os.environ.get("PIXGUARD_SEED", "42"))
     generator.add_argument("--count", type=int, default=os.environ.get("PIXGUARD_EVENT_COUNT", "100000"))
     generator.add_argument("--output", type=Path, default=data_directory() / "events.jsonl")
+    publisher = subcommands.add_parser("publish", help="Publish a validated synthetic batch to Kafka")
+    publisher.add_argument("--input", type=Path, default=data_directory() / "events.jsonl")
+    publisher.add_argument("--batch-id", required=True)
+    publisher.add_argument("--output-root", type=Path, default=data_directory() / "publications")
+    publisher.add_argument("--timeout", type=float, default=60.0)
     arguments = parser.parse_args()
+    if arguments.command == "publish":
+        from pixguard_ai.application.publish_events import publish_events
+        from pixguard_ai.infrastructure.kafka.producer import KafkaPublisher
+        from pixguard_ai.infrastructure.kafka.storage import FilePublicationStore, JsonlPublicationSource
+
+        previous_handler = signal.getsignal(signal.SIGTERM)
+
+        def stop_publication(_signum: int, _frame: object) -> None:
+            """Leave interrupted delivery explicitly uncertain on graceful stop."""
+            raise KeyboardInterrupt
+
+        try:
+            store = FilePublicationStore(arguments.output_root)
+            source = JsonlPublicationSource(arguments.input, store)
+            kafka = KafkaPublisher(
+                os.environ.get("PIXGUARD_KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"),
+                os.environ.get("PIXGUARD_KAFKA_TOPIC", "pixguard.payment_event_v1"),
+                arguments.timeout,
+            )
+            signal.signal(signal.SIGTERM, stop_publication)
+            manifest = publish_events(arguments.batch_id, source, kafka, store, arguments.timeout)
+        except KeyboardInterrupt:
+            parser.exit(130, "Publication interrupted; inspect its manifest.\n")
+        except Exception as error:
+            parser.exit(2, f"Publication failed ({type(error).__name__}); inspect its manifest.\n")
+        finally:
+            signal.signal(signal.SIGTERM, previous_handler)
+        print(json.dumps(manifest, sort_keys=True))
+        return
     if arguments.command == "generate":
         previous_handler = signal.getsignal(signal.SIGTERM)
 

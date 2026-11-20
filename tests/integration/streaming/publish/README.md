@@ -63,3 +63,14 @@ um manifesto de falha a sucesso. `acks=all` e idempotência são por sessão; um
 republicação com outro ID pode criar duplicatas. Não há exactly-once entre Kafka e
 filesystem. O prazo `--timeout` limita inspeção/envio Kafka (até 3600s), não a cópia
 local, validação ou fsync. Broker único PLAINTEXT é limite do laboratório.
+
+A reserva sincroniza também a cadeia de diretórios ancestrais, do topo do
+filesystem até o namespace do lote: um ancestral existente pode ter sido criado
+por outro processo que ainda não fez fsync do pai. Para `--output-root` customizado,
+o usuário do container precisa conseguir abrir esses diretórios para leitura e
+o filesystem precisa suportar fsync de diretórios. Qualquer recusa interrompe a
+reserva antes do envio; não há fallback que omita sincronização.
+
+O namespace é resolvido para seu caminho canônico na construção do adaptador;
+aliases/symlinks existentes são resolvidos antes de criar diretórios. Criação,
+sincronização e reserva usam essa mesma cadeia física.

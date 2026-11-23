@@ -1,5 +1,7 @@
 """Presentation tests for Kafka stage states in the dashboard."""
 
+from pathlib import Path
+
 from pixguard_ai.infrastructure.local.streaming_results import StreamingSnapshot
 from pixguard_ai.interfaces.dashboard import render_streaming_results
 
@@ -13,6 +15,9 @@ class Dashboard:
 
     def __getattr__(self, name: str):
         return lambda value, *args, **kwargs: self.lines.append(str(value))
+
+    def metric(self, label: str, value: str) -> None:
+        self.metrics.append(f"{label}: {value}")
 
     def columns(self, count: int) -> list[object]:
         return [Metric(self.metrics) for _ in range(count)]
@@ -97,3 +102,50 @@ def test_missing_or_failed_state_is_explicit_and_sanitized() -> None:
     text = " ".join(dashboard.lines)
     assert "Falha registrada no manifesto" in text
     assert "payload-secret" not in text
+
+
+def test_real_active_capture_shows_lag_without_inventing_count_or_observation_time(
+        tmp_path: Path) -> None:
+    """Read the producer's actual active manifest without opening raw segments."""
+    from pixguard_ai.application.capture_events import CaptureRequest
+    from pixguard_ai.infrastructure.kafka.capture_storage import CaptureStorage
+    from pixguard_ai.infrastructure.local.streaming_results import load_latest_streaming_results
+
+    storage = CaptureStorage(tmp_path)
+    try:
+        storage.reserve(CaptureRequest("capture-active", "cluster-1", "topic", 0, 5, None, tmp_path))
+        storage.fix_end(20)
+        storage.confirmed(11)
+    finally:
+        storage.close()
+    state = load_latest_streaming_results(tmp_path)
+    assert not state.error
+    assert "count" not in state.capture
+    dashboard = Dashboard()
+    render_streaming_results(dashboard, state)
+    text = " ".join(dashboard.lines + dashboard.metrics)
+    assert "Coordenadas capturadas: Não disponível" in text
+    assert "Lag físico de offsets: 8" in text
+    assert "Próximo offset durável: 12" in text
+    assert "fim exclusivo: 20" in text
+    assert f"Início da captura UTC: {state.capture['started_at']}" in text
+    assert "Instante de atualização da posição: não disponível" in text
+
+
+def test_completed_stages_display_start_and_finish_timestamps() -> None:
+    dashboard = Dashboard()
+    started = "2026-11-20T10:00:00+00:00"
+    finished = "2026-11-20T10:00:10+00:00"
+    state = StreamingSnapshot(
+        {"source_batch_id": "batch", "status": "completed", "total": 0,
+         "confirmed": 0, "uncertain": 0, "not_sent": 0,
+         "started_at": started, "finished_at": finished},
+        {"capture_id": "capture", "status": "completed", "topic": "topic", "partition": 0,
+         "start": 0, "end": 10, "count": 0, "started_at": started, "finished_at": finished},
+        None, "Manifestos disponíveis.",
+    )
+    render_streaming_results(dashboard, state)
+    text = " ".join(dashboard.lines)
+    for stage in ("publicação", "captura"):
+        assert f"Início da {stage} UTC: {started}" in text
+        assert f"Conclusão da {stage} UTC: {finished}" in text

@@ -65,6 +65,15 @@ def _integer(value: object) -> bool:
     return type(value) is int and value >= 0
 
 
+def _stage_timestamps(value: dict[str, Any]) -> None:
+    """Require terminal timestamps and prevent reversed lifecycle times."""
+    started = _timestamp(value["started_at"])
+    finished = value.get("finished_at")
+    if value["status"] in {"completed", "failed", "interrupted"} or finished is not None:
+        if _timestamp(finished) < started:
+            raise ValueError("stage finishes before it starts")
+
+
 def _publication(value: object) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         raise ValueError("publication manifest is invalid")
@@ -86,12 +95,7 @@ def _publication(value: object) -> dict[str, Any] | None:
     if value["status"] == "completed" and (value["confirmed"] != value["total"]
                                             or value["uncertain"] != 0 or value["not_sent"] != 0):
         raise ValueError("completed publication is incomplete")
-    _timestamp(value["started_at"])
-    if value.get("finished_at") is not None:
-        _timestamp(value["finished_at"])
-    if value.get("last_confirmed_offset") is not None:
-        if not _integer(value["last_confirmed_offset"]):
-            raise ValueError("capture confirmed offset is invalid")
+    _stage_timestamps(value)
     if value.get("source_sha256") is not None and (
             not isinstance(value["source_sha256"], str)
             or SHA256.fullmatch(value["source_sha256"]) is None):
@@ -105,7 +109,7 @@ def _capture(value: object) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         raise ValueError("capture manifest is invalid")
     required = {"capture_manifest_version", "capture_id", "status", "cluster_id",
-                "topic", "partition", "start", "count", "end", "started_at"}
+                "topic", "partition", "start", "end", "started_at"}
     if not required <= value.keys():
         raise ValueError("capture manifest is incomplete")
     if type(value["capture_manifest_version"]) is not int or value["capture_manifest_version"] != 1:
@@ -115,20 +119,27 @@ def _capture(value: object) -> dict[str, Any] | None:
     if not isinstance(value["status"], str) or value["status"] not in {
             "capturing", "completed", "failed", "interrupted"}:
         raise ValueError("capture status is invalid")
-    for name in ("partition", "start", "count"):
+    for name in ("partition", "start"):
         if not _integer(value[name]):
             raise ValueError("capture offset/count is invalid")
     if value["end"] is not None and (not _integer(value["end"]) or value["end"] < value["start"]):
         raise ValueError("capture range is invalid")
+    if "count" in value and not _integer(value["count"]):
+        raise ValueError("capture count is invalid")
+    confirmed = value.get("last_confirmed_offset")
+    if confirmed is not None and (
+            not _integer(confirmed) or confirmed < value["start"]
+            or (value["end"] is not None and confirmed >= value["end"])):
+        raise ValueError("capture confirmed offset is invalid")
     if not isinstance(value["cluster_id"], str) or not value["cluster_id"]:
         raise ValueError("cluster identity is invalid")
     if not isinstance(value["topic"], str) or not value["topic"]:
         raise ValueError("topic identity is invalid")
-    _timestamp(value["started_at"])
-    if value.get("finished_at") is not None:
-        _timestamp(value["finished_at"])
+    _stage_timestamps(value)
     if value["status"] == "completed":
-        if value["end"] is None or not isinstance(value.get("segment"), dict):
+        if (not _integer(value.get("count")) or value["end"] is None
+                or value["count"] > value["end"] - value["start"]
+                or not isinstance(value.get("segment"), dict)):
             raise ValueError("completed capture is incomplete")
         segment = value["segment"]
         if (not isinstance(segment.get("sha256"), str)
@@ -228,7 +239,10 @@ def load_latest_streaming_results(root: Path) -> StreamingSnapshot:
                     invalid_snapshot = True
                     continue
                 snapshots = capture_dir / "snapshots"
-                if snapshots.is_symlink() or not snapshots.is_dir():
+                if snapshots.is_symlink():
+                    invalid_snapshot = True
+                    continue
+                if not snapshots.is_dir():
                     continue
                 snapshot_dirs = list(snapshots.iterdir())
                 if len(snapshot_dirs) > MAX_DIRECTORIES:
@@ -242,26 +256,31 @@ def load_latest_streaming_results(root: Path) -> StreamingSnapshot:
                         continue
                     try:
                         value = _snapshot(_read_json(manifest_path))
-                        if capture is not None:
-                            if value["capture_id"] != capture["capture_id"]:
-                                raise ValueError("snapshot capture identity mismatch")
-                            provenance = value["capture"]
-                            if (provenance.get("cluster_id") != capture["cluster_id"]
-                                    or provenance.get("topic") != capture["topic"]
-                                    or provenance.get("partition") != capture["partition"]
-                                    or provenance.get("start") != capture["start"]
-                                    or provenance.get("end") != capture["end"]):
-                                raise ValueError("snapshot capture provenance mismatch")
+                        parent_manifest = capture_dir / "manifest.json"
+                        if parent_manifest.is_symlink():
+                            raise ValueError("snapshot parent manifest is a symlink")
+                        parent_capture = _capture(_read_json(parent_manifest))
+                        if (parent_capture["status"] != "completed"
+                                or parent_capture["capture_id"] != capture_dir.name
+                                or value["capture_id"] != parent_capture["capture_id"]):
+                            raise ValueError("snapshot capture identity mismatch")
+                        provenance = value["capture"]
+                        if (any(provenance.get(name) != parent_capture[name]
+                                for name in ("cluster_id", "topic", "partition", "start", "end"))
+                                or provenance.get("segment_sha256") != parent_capture["segment"]["sha256"]
+                                or value["counts"]["physical"] != parent_capture["count"]
+                                or _timestamp(value["finished_at"]) < _timestamp(parent_capture["finished_at"])):
+                            raise ValueError("snapshot capture provenance mismatch")
                         snapshot_candidates.append((_timestamp(value["finished_at"]), value))
                     except (ValueError, json.JSONDecodeError, OSError, OverflowError):
                         invalid_snapshot = True
                         continue
         snapshot = None
+        if invalid_snapshot:
+            raise ValueError("snapshot namespace contains invalid metadata")
         if snapshot_candidates:
             snapshot_candidates.sort(key=lambda pair: pair[0], reverse=True)
             snapshot = snapshot_candidates[0][1]
-        elif invalid_snapshot:
-            raise ValueError("snapshot namespace contains invalid metadata")
         if publication is None and capture is None and snapshot is None:
             return StreamingSnapshot(None, None, None,
                                      "Nenhum transporte Kafka publicado ou capturado disponível.")

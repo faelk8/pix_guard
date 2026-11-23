@@ -225,6 +225,9 @@ def render_streaming_results(st: ModuleType, snapshot: StreamingSnapshot) -> Non
             "failed": "Falhou",
         }
         st.write(f"Estado: {status_labels[publication['status']]} • lote: `{publication['source_batch_id']}`")
+        st.write(f"Início da publicação UTC: {publication.get('started_at', 'Não disponível')}")
+        if publication.get("finished_at") is not None:
+            st.write(f"Conclusão da publicação UTC: {publication['finished_at']}")
         columns = st.columns(4)
         labels = ("Produzidos", "Confirmados", "Incertos", "Não enviados")
         names = ("total", "confirmed", "uncertain", "not_sent")
@@ -241,15 +244,21 @@ def render_streaming_results(st: ModuleType, snapshot: StreamingSnapshot) -> Non
         st.write(f"Estado: {capture['status']} • captura: `{capture['capture_id']}`")
         st.write(f"Tópico: `{capture['topic']}` • partição: {capture['partition']} • "
                  f"faixa física: [{capture['start']}, {capture['end'] if capture['end'] is not None else 'aberta'})")
-        st.metric("Coordenadas capturadas", format_count(capture["count"]))
+        st.write(f"Início da captura UTC: {capture.get('started_at', 'Não disponível')}")
+        if capture.get("finished_at") is not None:
+            st.write(f"Conclusão da captura UTC: {capture['finished_at']}")
+        count = capture.get("count")
+        st.metric("Coordenadas capturadas", format_count(count) if count is not None else "Não disponível")
         if capture["status"] == "capturing" and capture["end"] is not None:
             confirmed = capture.get("last_confirmed_offset")
             if type(confirmed) is int:
-                lag_positions = max(0, capture["end"] - (confirmed + 1))
+                lag_positions = capture["end"] - (confirmed + 1)
                 st.metric("Lag físico de offsets", format_count(lag_positions))
+                st.caption(f"Próximo offset durável: {confirmed + 1} • fim exclusivo: {capture['end']}")
             else:
                 st.metric("Lag físico de offsets", "Não disponível")
             st.caption("Lag usa posições físicas de offset confirmadas; não é latência nem atraso de event_time.")
+            st.caption("Instante de atualização da posição: não disponível no manifesto; o início da captura não é uma atualização do lag.")
         elif capture["status"] == "completed":
             st.caption("Lag não é estimado em captura concluída; a faixa foi fechada.")
         if capture.get("error") is not None:

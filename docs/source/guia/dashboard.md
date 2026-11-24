@@ -42,3 +42,21 @@ explica que os rótulos e agregados não medem desempenho antifraude real.
 
 Se ainda não houver execução concluída válida, a seção informa esse estado e não inventa zeros. Consulte o
 manifesto e o guia para distinguir artefato ausente, execução falha ou resultado concluído.
+
+## Acompanhar o transporte Kafka — FASE 2
+
+A seção **Transporte Kafka — FASE 2** relê os manifestos a cada dois segundos e mostra publicação, captura e
+snapshot exportado como etapas independentes. Os estados `validando` e `publicando` indicam trabalho em curso;
+`capturando` indica que a faixa Kafka ainda pode crescer; `concluído`, `interrompido` e `falhou` vêm do manifesto.
+Um manifesto ausente aparece como indisponível, e uma entrada inválida produz uma mensagem genérica sem expor
+o texto bruto do erro.
+
+As contagens de eventos produzidos, confirmados, incertos e não enviados pertencem à publicação. A captura
+mostra a contagem disponível no manifesto e os limites da faixa física. Enquanto está ativa, o lag é calculado
+como `fim exclusivo - próximo offset durável`; são posições físicas, não quantidade de eventos de negócio nem
+latência. A ausência de uma posição confirmada é mostrada como indisponível, não como zero.
+
+Um snapshot concluído permanece associado à captura que o originou, mesmo quando uma captura posterior está
+ativa. O painel mostra separadamente registros físicos, exportados, duplicados e em quarentena de transporte
+ou de contrato. Ele lê apenas manifestos validados: não abre segmentos Kafka nem exibe payloads. Os eventos
+apresentados são sintéticos e não medem desempenho antifraude real.

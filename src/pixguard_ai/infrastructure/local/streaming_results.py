@@ -43,8 +43,11 @@ def _read_json(path: Path) -> dict[str, Any]:
         payload = stream.read(MAX_MANIFEST_BYTES + 1)
     if len(payload) > MAX_MANIFEST_BYTES:
         raise ValueError("manifest exceeds limit")
-    value = json.loads(payload, object_pairs_hook=_unique_object,
-                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite JSON")))
+    try:
+        value = json.loads(payload, object_pairs_hook=_unique_object,
+                           parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite JSON")))
+    except RecursionError as exc:
+        raise ValueError("manifest nesting exceeds parser limit") from exc
     if not isinstance(value, dict):
         raise ValueError("manifest must be an object")
     return value

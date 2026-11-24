@@ -135,6 +135,20 @@ def test_empty_and_duplicate_key_manifests_are_explicit(tmp_path: Path) -> None:
     assert invalid.publication is None and invalid.error
 
 
+def test_deeply_nested_manifest_is_rejected_with_sanitized_error(tmp_path: Path) -> None:
+    """Parser recursion errors must not escape the dashboard's manifest boundary."""
+    path = tmp_path / "publications" / "batch-1" / "manifest.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"nested":' + ("[" * 2_000) + "0" + ("]" * 2_000) + "}",
+                    encoding="utf-8")
+
+    result = load_latest_streaming_results(tmp_path)
+
+    assert result.error
+    assert result.publication is None
+    assert result.message == "Manifestos de transporte inválidos ou incompatíveis."
+
+
 def test_malformed_status_and_symlink_capture_are_fail_closed(tmp_path: Path) -> None:
     outside = tmp_path.parent / "outside-capture"
     outside.mkdir(exist_ok=True)

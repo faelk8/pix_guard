@@ -197,13 +197,21 @@ def main() -> None:
         "PIXGUARD_DATA_DIR", "/data/pixguard"))))
     st.divider()
     st.header("Transporte Kafka — FASE 2")
-    render_streaming_results(st, load_latest_streaming_results(Path(os.environ.get(
-        "PIXGUARD_DATA_DIR", "/data/pixguard"))))
+    render_streaming_fragment(st, Path(os.environ.get("PIXGUARD_DATA_DIR", "/data/pixguard")))
 
 
 def _sanitize_stream_error(value: object) -> str:
     """Never echo transport error text; it can contain endpoints or secrets."""
     return "Falha registrada no manifesto; detalhes não exibidos"
+
+
+def render_streaming_fragment(st: ModuleType, data_dir: Path) -> None:
+    """Refresh Kafka manifest metrics independently on a bounded interval."""
+    @st.fragment(run_every="2s")
+    def refresh() -> None:
+        render_streaming_results(st, load_latest_streaming_results(data_dir))
+
+    refresh()
 
 
 def render_streaming_results(st: ModuleType, snapshot: StreamingSnapshot) -> None:

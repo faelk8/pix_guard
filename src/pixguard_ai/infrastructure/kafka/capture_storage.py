@@ -44,7 +44,8 @@ def read_json(path: Path) -> dict[str, Any]:
     """Read a bounded JSON object."""
     if path.is_symlink():
         raise ValueError("capture metadata is a symlink")
-    payload = path.read_bytes()
+    with path.open("rb") as stream:
+        payload = stream.read(MAX_METADATA + 1)
     if len(payload) > MAX_METADATA:
         raise ValueError("capture metadata exceeds limit")
     value = json.loads(payload, object_pairs_hook=unique_object,
@@ -140,6 +141,7 @@ class CaptureStorage:
             fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             os.close(self._lock_fd)
+            del self._lock_fd
             raise FileExistsError("capture is already active")
         self.segment = self.directory / "records.jsonl"
         self.request = request
@@ -155,9 +157,8 @@ class CaptureStorage:
             if manifest.get("status") == "completed":
                 if manifest.get("end") != request.end and request.end is not None:
                     raise ValueError("completed capture range mismatch")
-                self.close()
                 return {"next_offset": manifest["end"], "count": manifest["count"],
-                        "fixed_end": manifest["end"]}
+                        "fixed_end": manifest["end"], "status": "completed"}
             if manifest.get("status") != "capturing":
                 raise ValueError("unsupported capture manifest status")
 
@@ -173,32 +174,59 @@ class CaptureStorage:
         next_offset = request.start
         count = 0
         if self.segment.exists():
-            raw_segment = self.segment.read_bytes()
-            if raw_segment and not raw_segment.endswith(b"\n"):
-                with self.segment.open("r+b", buffering=0) as stream:
-                    stream.truncate(raw_segment.rfind(b"\n") + 1)
-                    os.fsync(stream.fileno())
-                sync_directory(self.directory)
-                raw_segment = self.segment.read_bytes()
-            seen: list[int] = []
-            for line in raw_segment.splitlines():
-                record = json.loads(line, object_pairs_hook=unique_object)
-                if record["partition"] != request.partition or record["topic"] != request.topic:
-                    raise ValueError("capture segment identity mismatch")
-                seen.append(record["offset"])
-            if seen:
-                if seen != sorted(seen) or len(set(seen)) != len(seen):
-                    raise ValueError("capture segment offsets are not ordered and unique")
-                if any(offset < request.start for offset in seen):
-                    raise ValueError("capture segment offset is below start")
-                next_offset = seen[-1] + 1
-                count = len(seen)
+            if self.segment.is_symlink():
+                raise ValueError("capture segment is a symlink")
+            previous = request.start - 1
+            with self.segment.open("r+b") as stream:
+                while True:
+                    position = stream.tell()
+                    line = stream.readline()
+                    if not line:
+                        break
+                    if not line.endswith(b"\n"):
+                        stream.truncate(position)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                        sync_directory(self.directory)
+                        break
+                    record = json.loads(line, object_pairs_hook=unique_object)
+                    payload = {key: value for key, value in record.items()
+                               if key != "checksum_sha256"}
+                    if sha256(canonical(payload)).hexdigest() != record.get("checksum_sha256"):
+                        raise ValueError("capture record checksum mismatch")
+                    if record["partition"] != request.partition or record["topic"] != request.topic:
+                        raise ValueError("capture segment identity mismatch")
+                    offset = record["offset"]
+                    if offset < request.start:
+                        raise ValueError("capture segment offset is below start")
+                    if offset <= previous:
+                        raise ValueError("capture segment offsets are not ordered and unique")
+                    previous = offset
+                    next_offset = offset + 1
+                    count += 1
+                # A prior failed batch fsync may have left complete visible records.
+                # Secure those bytes before treating them as a resumable prefix.
+                os.fsync(stream.fileno())
+            sync_directory(self.directory)
         fixed_end = manifest_path.exists()
         fixed_end = read_json(manifest_path).get("end") if fixed_end else request.end
         return {"next_offset": next_offset, "count": count, "fixed_end": fixed_end}
 
     def append(self, record: dict[str, Any]) -> None:
         """Append and fsync one raw record before Kafka offset commit."""
+        self._append(record, sync=True)
+
+    def append_batch(self, records: list[dict[str, Any]]) -> None:
+        """Fsync a bounded batch completely before its broker offset can advance."""
+        for record in records:
+            self._append(record, sync=False)
+        if records:
+            with self.segment.open("rb") as stream:
+                os.fsync(stream.fileno())
+            sync_directory(self.directory)
+
+    def _append(self, record: dict[str, Any], sync: bool) -> None:
+        """Write one complete encoded record, optionally syncing immediately."""
         required = {"topic", "partition", "offset", "key_base64", "value_base64", "headers", "timestamp"}
         if not required <= record.keys():
             raise ValueError("capture record is incomplete")
@@ -225,10 +253,12 @@ class CaptureStorage:
                 if count is None or count <= 0:
                     raise OSError("capture segment write made no progress")
                 written += count
-            os.fsync(descriptor)
+            if sync:
+                os.fsync(descriptor)
         finally:
             os.close(descriptor)
-        sync_directory(self.directory)
+        if sync:
+            sync_directory(self.directory)
 
     def fix_end(self, end: int) -> None:
         """Freeze the resolved upper bound before offering records to Kafka."""
@@ -272,13 +302,17 @@ class CaptureStorage:
             sync_directory(self.directory)
         if self.segment.is_symlink():
             raise ValueError("capture segment is a symlink")
-        offsets = []
-        if self.segment.exists():
-            for line in self.segment.read_bytes().splitlines():
+        observed = 0
+        previous = manifest["start"] - 1
+        with self.segment.open("rb") as stream:
+            for line in stream:
                 record = json.loads(line, object_pairs_hook=unique_object)
-                offsets.append(record["offset"])
-        if (len(offsets) != count or len(set(offsets)) != len(offsets)
-                or any(offset < manifest["start"] or offset >= end for offset in offsets)):
+                offset = record["offset"]
+                if offset <= previous or offset >= end:
+                    raise ValueError("captured offsets do not reconcile")
+                previous = offset
+                observed += 1
+        if observed != count:
             raise ValueError("captured offsets do not reconcile")
         manifest.update({
             "status": "completed", "end": end, "count": count,
@@ -299,17 +333,24 @@ class CaptureStorage:
                 or manifest.get("end") != end):
             raise ValueError("capture is not a completed replay match")
         segment = self.directory / "records.jsonl"
+        if segment.is_symlink():
+            raise ValueError("capture segment is a symlink")
         recorded = manifest["segment"]
         if digest(segment) != recorded["sha256"] or segment.stat().st_size != recorded["size_bytes"]:
             raise ValueError("capture segment checksum mismatch")
-        offsets = []
-        for line in segment.read_bytes().splitlines():
-            record = json.loads(line, object_pairs_hook=unique_object)
-            if sha256(canonical({key: value for key, value in record.items()
-                                  if key != "checksum_sha256"})).hexdigest() != record["checksum_sha256"]:
-                raise ValueError("capture record checksum mismatch")
-            offsets.append(record["offset"])
-        if (len(set(offsets)) != len(offsets)
-                or any(offset < start or offset >= end for offset in offsets)):
+        observed = 0
+        previous = start - 1
+        with segment.open("rb") as stream:
+            for line in stream:
+                record = json.loads(line, object_pairs_hook=unique_object)
+                if sha256(canonical({key: value for key, value in record.items()
+                                      if key != "checksum_sha256"})).hexdigest() != record["checksum_sha256"]:
+                    raise ValueError("capture record checksum mismatch")
+                offset = record["offset"]
+                if offset <= previous or offset >= end:
+                    raise ValueError("capture replay offsets do not reconcile")
+                previous = offset
+                observed += 1
+        if observed != manifest["count"]:
             raise ValueError("capture replay offsets do not reconcile")
         return manifest

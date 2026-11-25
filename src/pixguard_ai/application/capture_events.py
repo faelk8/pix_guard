@@ -74,6 +74,30 @@ class CaptureStorage(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class DurableCaptureWriter:
+    """Keep append callable compatibility and expose post-commit confirmation."""
+
+    storage: CaptureStorage
+
+    def __call__(self, record: dict[str, Any]) -> None:
+        """Make the record durable before the source commits its offset."""
+        self.storage.append(record)
+
+    def append_batch(self, records: list[dict[str, Any]]) -> None:
+        """Durably append a source batch, falling back to individual storage."""
+        append_batch = getattr(self.storage, "append_batch", None)
+        if append_batch is not None:
+            append_batch(records)
+        else:
+            for record in records:
+                self.storage.append(record)
+
+    def confirmed(self, offset: int) -> None:
+        """Record successful broker confirmation after durable append."""
+        self.storage.confirmed(offset)
+
+
 def capture_events(request: CaptureRequest, source: CaptureSource, storage: CaptureStorage) -> dict[str, Any]:
     """Capture [start,end), validating cluster, offsets and group before and during writes."""
     if source.identity() != request.cluster_id:
@@ -86,6 +110,9 @@ def capture_events(request: CaptureRequest, source: CaptureSource, storage: Capt
             storage.close()
         raise
     try:
+        if state.get("status") == "completed":
+            return storage.verify_replay(
+                request.topic, request.partition, request.start, int(state["fixed_end"]))
         low, high = source.watermarks(request.partition)
         persisted_end = state.get("fixed_end")
         end = request.end if request.end is not None else (
@@ -106,7 +133,7 @@ def capture_events(request: CaptureRequest, source: CaptureSource, storage: Capt
         committed = source.committed(request.partition)
         if committed is not None and committed > start:
             raise ValueError("capture consumer group is already ahead of requested start")
-        count = source.capture(start, end, storage.append)
+        count = source.capture(start, end, DurableCaptureWriter(storage))
         count += int(state.get("count", 0))
         return storage.complete(count)
     finally:

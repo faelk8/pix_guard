@@ -6,6 +6,11 @@ Este guia explica as etapas e como interpretar suas evidências. O
 {download}`runbook operacional da FASE 5 <../../runbooks/fase-5.md>` é a fonte canônica dos comandos completos,
 incluindo a consulta PySpark que compara os Parquet Gold por grupo.
 
+As decisões que orientam esta integração estão registradas nas
+{download}`ADR 0006 — Kafka na FASE 2 <../../adr/0006-fase2-kafka-streaming.md>` e
+{download}`ADR 0007 — cliente Kafka Python <../../adr/0007-cliente-kafka-python.md>`. O
+{doc}`índice de decisões de arquitetura <../arquitetura/decisoes>` aponta para o histórico completo.
+
 Todos os eventos e rótulos são inventados. O ensaio usa **snapshots finitos de offsets Kafka**, exportados para
 **JSONL processado em lote pelo Spark**. O broker local tem uma partição e uma réplica. Os resultados não
 estabelecem processamento contínuo, alta disponibilidade, semântica *exactly-once* de ponta a ponta nem eficácia

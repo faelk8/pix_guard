@@ -83,3 +83,32 @@ O comando `evaluate` grava predictions sem rótulo, associa o alvo depois e publ
 No lote verificado da FASE 4, ambos continham 100.000 eventos e a comparação retornou `equivalent: true`.
 Consulte o [guia da análise](../guia/analise-fase-4.md) para gerar e processar um lote, explicar a matriz e
 as métricas e conhecer a limitação de checksum histórico Silver.
+
+## Integração final — FASE 5
+
+O [guia da FASE 5](../guia/integracao-fase-5.md) prepara um projeto Compose inédito e define todas as variáveis
+dos comandos abaixo. Execute-os na raiz, no mesmo terminal e depois de preparar imagens, storage e tópico
+conforme o guia. O {download}`runbook canônico <../../runbooks/fase-5.md>` contém a consulta PySpark de comparação
+dos Parquet completos. A sequência usa um lote de 100.000 eventos e uma faixa finita; Spark recebe JSONL em lote.
+
+| Etapa | Comando após a preparação do guia |
+|---|---|
+| Gerar lote | `docker compose run --rm --no-deps app pixguard generate --seed 42 --count 100000 --output "$original"` |
+| Publicar | `docker compose run --rm --no-deps app pixguard publish --input "$original" --batch-id "$batch" --timeout 1800` |
+| Capturar offsets [0, 100000) | `docker compose run --rm --no-deps app pixguard capture --capture-id "$capture" --topic "$PIXGUARD_KAFKA_TOPIC" --partition 0 --start 0 --end 100000` |
+| Exportar JSONL | `docker compose run --rm --no-deps app pixguard export-capture --capture-id "$capture" --snapshot-id "$snapshot"` |
+| Processar snapshot | `docker compose --profile pipeline run --rm --no-deps pipeline pixguard-pipeline process --input "$exported" --run-id "$kafka_run"` |
+| Avaliar Silver | `docker compose --profile pipeline run --rm --no-deps pipeline pixguard-analysis evaluate --source-run-id "$kafka_run" --analysis-run-id "$analysis_a"` |
+| Repetir avaliação da mesma Silver | `docker compose --profile pipeline run --rm --no-deps pipeline pixguard-analysis evaluate --source-run-id "$kafka_run" --analysis-run-id "$analysis_b"` |
+| Comparar avaliações da mesma Silver | `docker compose --profile pipeline run --rm --no-deps pipeline pixguard-analysis compare --left "$analysis_a" --right "$analysis_b"` |
+| Construir portal com warnings como erros | `docker compose --profile docs run --rm --build docs` |
+
+Publicação, captura e snapshot devem estar concluídos e reconciliados antes do Spark. Confira os hashes de
+manifestos: `input.sha256` Kafka corresponde a `events_sha256` do snapshot; o offline corresponde a
+`source_sha256` da publicação. Não espere hashes iguais entre original e exportado, cuja serialização e ordem
+são canônicas. O segmento de transporte ainda inclui metadados Kafka que podem variar.
+
+No ensaio registrado, offline, Kafka e reexecução tiveram Bronze/Silver 100.000, duplicatas/quarentena zero,
+Gold 3.269 e soma Decimal BRL `245449133.57`. Replay exige novos IDs de captura/snapshot sem republicação;
+retomada de captura interrompida exige os mesmos ID, tópico, partição e faixa. Novos runs Spark e análises
+sempre usam IDs exclusivos. O guia descreve os 8 testes de recuperação controlada e seus limites.

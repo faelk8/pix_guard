@@ -1,8 +1,8 @@
 Guia de uso
 ===========
 
-Este guia começa pelos conceitos e comandos da FASE 1 e inclui um passo a passo para o processamento offline da
-FASE 3. O **PixGuard AI não processa pagamentos nem é um sistema antifraude**: todos os registros e rótulos são
+Este guia percorre as FASES 1–5: contrato, geração, transporte Kafka, snapshots, processamento Spark em lote
+e avaliação sintética. O **PixGuard AI não processa pagamentos nem é um sistema antifraude**: todos os registros e rótulos são
 inventados para estudo.
 
 Primeiros passos
@@ -28,7 +28,8 @@ o broker Kafka. O gerador atual escreve JSONL; ele não envia automaticamente es
 
    Se quiser abrir somente o serviço de inspeção Kafka, rode ``docker compose up -d --wait redpanda-console``.
 
-As páginas seguintes explicam o contrato, o painel, o processamento offline e a análise sintética.
+Para executar o fluxo completo, siga :doc:`integracao-fase-5`. As demais páginas detalham o contrato, o painel,
+o processamento offline e a análise sintética.
 
 .. toctree::
    :maxdepth: 1
@@ -37,6 +38,7 @@ As páginas seguintes explicam o contrato, o painel, o processamento offline e a
    dashboard
    processamento-fase-3
    analise-fase-4
+   integracao-fase-5
    kafka-console
 
 Solução de problemas

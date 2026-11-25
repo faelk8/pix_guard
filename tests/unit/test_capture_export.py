@@ -117,4 +117,45 @@ def test_export_reconciles_valid_duplicate_conflict_and_quarantine(tmp_path: Pat
         "contract_quarantine": 4,
     }
     assert len(quarantine) == 8
+    assert [json.loads(line)["capture_offset"] for line in quarantine] == [3, 4, 6, 7, 5, 0, 1, 2]
     assert manifest["reconciliation"]["passed"] is True
+
+
+def test_export_sorted_bytes_duplicates_and_immutable_snapshot(tmp_path: Path) -> None:
+    """Input coordinate order and repeated IDs preserve canonical output bytes."""
+    identifiers = ["12345678-1234-5234-9234-567812345679",
+                   "12345678-1234-5234-9234-567812345678"]
+    records = [capture_record(index, canonical(event(identifier)), identifier.encode())
+               for index, identifier in enumerate(identifiers + identifiers)]
+    create_capture(tmp_path, list(reversed(records)))
+    storage = CaptureSnapshot(tmp_path)
+    request = ExportRequest("capture-1", "snapshot-1", tmp_path)
+    manifest = export_capture(request, storage, storage)
+    expected = b"".join(canonical(event(identifier)).replace(b"+00:00", b"Z") + b"\n"
+                        for identifier in sorted(identifiers))
+    path = tmp_path / "captures/capture-1/snapshots/snapshot-1/events.jsonl"
+    assert path.read_bytes() == expected
+    assert manifest["events_sha256"] == sha256(expected).hexdigest()
+    assert manifest["counts"]["duplicates"] == 2
+    with pytest.raises(FileExistsError):
+        export_capture(request, storage, storage)
+    assert path.read_bytes() == expected
+
+
+def test_duplicate_coordinates_fail_before_reserving_snapshot(tmp_path: Path) -> None:
+    """Verification completes before an immutable snapshot name is consumed."""
+    record = capture_record(0, b"{}", b"key")
+    create_capture(tmp_path, [record, record])
+    storage = CaptureSnapshot(tmp_path)
+    with pytest.raises(ValueError, match="duplicate capture offset"):
+        export_capture(ExportRequest("capture-1", "snapshot-1", tmp_path), storage, storage)
+    assert not (tmp_path / "captures/capture-1/snapshots/snapshot-1").exists()
+
+
+def test_external_sort_merges_multiple_passes() -> None:
+    """More than 32 disk runs preserve order and duplicates through merge passes."""
+    from pixguard_ai.infrastructure.local.capture_snapshot import disk_sorted
+    padding = "x" * 550_000
+    records = ([index % 7, padding] for index in range(70, -1, -1))
+    assert [item[0] for item in disk_sorted(records, key=lambda item: item[0])] == sorted(
+        index % 7 for index in range(70, -1, -1))

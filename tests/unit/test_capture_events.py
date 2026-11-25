@@ -241,3 +241,300 @@ def test_capture_rejects_identity_and_offset_safety(tmp_path: Path,
         except ValueError as error:
             assert message in str(error)
             raise
+
+
+def test_segment_validation_streams_without_read_bytes(tmp_path: Path, monkeypatch) -> None:
+    storage = CaptureStorage(tmp_path)
+    capture_events(request(tmp_path), FakeSource(), storage)
+    manifest_path = storage.directory / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["status"] = "capturing"
+    manifest_path.write_text(json.dumps(manifest))
+    original = Path.read_bytes
+
+    def bounded_read(path: Path) -> bytes:
+        assert path.name != "records.jsonl", "segment must be streamed"
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", bounded_read)
+    resumed = CaptureStorage(tmp_path)
+    state = resumed.reserve(request(tmp_path))
+    assert state["count"] == 4
+    resumed.complete(4)
+    assert resumed.verify_replay(request(tmp_path).topic, 0, 0, 4)["count"] == 4
+
+
+@pytest.mark.parametrize("fail_commit", [False, True])
+@pytest.mark.parametrize("batch_size", [1, 3])
+def test_kafka_capture_renews_inactivity_and_confirms_after_commit(
+    tmp_path: Path, monkeypatch, fail_commit: bool, batch_size: int,
+) -> None:
+    from pixguard_ai.infrastructure.kafka import capture as adapter
+
+    monkeypatch.setattr(adapter, "COMMIT_BATCH_SIZE", batch_size)
+    clock = [0.0]
+    events = []
+
+    class Message:
+        def __init__(self, offset):
+            self.number = offset
+
+        def error(self):
+            return None
+
+        def offset(self):
+            return self.number
+
+        def topic(self):
+            return request(tmp_path).topic
+
+        def partition(self):
+            return 0
+
+        def key(self):
+            return b"key"
+
+        def value(self):
+            return b"value"
+
+        def headers(self):
+            return []
+
+        def timestamp(self):
+            return (0, 1700000000000)
+
+    class Consumer:
+        next_offset = 0
+
+        def assign(self, partitions):
+            pass
+
+        def poll(self, timeout):
+            clock[0] += 20
+            message = Message(self.next_offset)
+            self.next_offset += 1
+            return message
+
+        def commit(self, message, asynchronous):
+            events.append(("commit", message.offset()))
+            return None if fail_commit else [adapter.TopicPartition(
+                request(tmp_path).topic, 0, message.offset() + 1)]
+
+    class Writer:
+        def __call__(self, record):
+            events.append(("append", record["offset"]))
+
+        def confirmed(self, offset):
+            events.append(("confirmed", offset))
+
+    monkeypatch.setattr(adapter.time, "monotonic", lambda: clock[0])
+    source = adapter.KafkaCaptureSource.__new__(adapter.KafkaCaptureSource)
+    source.topic = request(tmp_path).topic
+    source.partition = 0
+    source._consumer = Consumer()
+    if fail_commit:
+        with pytest.raises(RuntimeError, match="not confirmed"):
+            source.capture(0, 4, Writer())
+        assert events == [("append", offset) for offset in range(batch_size)] + [
+            ("commit", batch_size - 1)]
+    else:
+        assert source.capture(0, 4, Writer()) == 4
+        assert clock[0] > 30
+        expected = []
+        for offset in range(4):
+            expected.append(("append", offset))
+            if (offset + 1) % batch_size == 0 or offset == 3:
+                expected.extend([("commit", offset), ("confirmed", offset)])
+        assert events == expected
+
+
+def test_kafka_capture_stalled_broker_has_bounded_wait(monkeypatch) -> None:
+    from pixguard_ai.infrastructure.kafka import capture as adapter
+
+    clock = [0.0]
+
+    class Consumer:
+        def assign(self, partitions):
+            pass
+
+        def poll(self, timeout):
+            clock[0] += timeout
+            return None
+
+    monkeypatch.setattr(adapter.time, "monotonic", lambda: clock[0])
+    source = adapter.KafkaCaptureSource.__new__(adapter.KafkaCaptureSource)
+    source.topic = "events"
+    source.partition = 0
+    source._consumer = Consumer()
+    with pytest.raises(ValueError, match="timed out"):
+        source.capture(0, 4, lambda record: None)
+    assert clock[0] == 30
+
+
+@pytest.mark.parametrize("failure", ["commit", "fsync"])
+def test_failed_batch_commit_resumes_after_durable_records(tmp_path: Path, monkeypatch, failure: str) -> None:
+    from unittest.mock import Mock
+    from pixguard_ai.infrastructure.kafka import capture as adapter
+
+    monkeypatch.setattr(adapter, "COMMIT_BATCH_SIZE", 3)
+    source = adapter.KafkaCaptureSource.__new__(adapter.KafkaCaptureSource)
+    source.topic = request(tmp_path).topic
+    source.partition = 0
+    source.identity = lambda: "cluster-1"
+    source.watermarks = lambda partition: (0, 4)
+    source.committed = lambda partition: None
+    messages = []
+    for offset in range(3):
+        message = Mock()
+        message.error.return_value = None
+        message.offset.return_value = offset
+        message.topic.return_value = source.topic
+        message.partition.return_value = 0
+        message.key.return_value = b"key"
+        message.value.return_value = b"value"
+        message.headers.return_value = []
+        message.timestamp.return_value = (0, 1700000000000)
+        messages.append(message)
+    source._consumer = Mock()
+    source._consumer.poll.side_effect = messages
+    source._consumer.commit.return_value = None
+    storage = CaptureStorage(tmp_path)
+    original_fsync = os.fsync
+
+    def fail_segment_fsync(descriptor: int) -> None:
+        if (hasattr(storage, "segment") and storage.segment.exists()
+                and os.fstat(descriptor).st_ino == storage.segment.stat().st_ino):
+            raise OSError("injected batch fsync failure")
+        original_fsync(descriptor)
+
+    if failure == "fsync":
+        monkeypatch.setattr(os, "fsync", fail_segment_fsync)
+    with pytest.raises((RuntimeError, OSError), match="not confirmed|fsync failure"):
+        capture_events(request(tmp_path), source, storage)
+    if failure == "fsync":
+        source._consumer.commit.assert_not_called()
+    monkeypatch.setattr(os, "fsync", original_fsync)
+    pending = json.loads((storage.directory / "manifest.json").read_text())
+    assert "last_confirmed_offset" not in pending
+    assert len(storage.segment.read_text().splitlines()) == 3
+    result = capture_events(request(tmp_path), FakeSource(committed=0), CaptureStorage(tmp_path))
+    assert result["count"] == 4
+    assert [json.loads(line)["offset"] for line in storage.segment.read_text().splitlines()] == [0, 1, 2, 3]
+
+
+def test_batch_syncs_segment_once_and_recovers_partial_tail(tmp_path: Path, monkeypatch) -> None:
+    storage = CaptureStorage(tmp_path)
+    storage.reserve(request(tmp_path))
+    original = os.fsync
+    synced = []
+
+    def track_sync(descriptor: int) -> None:
+        synced.append(os.fstat(descriptor).st_ino)
+        original(descriptor)
+
+    monkeypatch.setattr(os, "fsync", track_sync)
+    records = [{"topic": request(tmp_path).topic, "partition": 0, "offset": offset,
+                "key_base64": None, "value_base64": None, "headers": [], "timestamp": 0}
+               for offset in range(3)]
+    storage.append_batch(records)
+    assert synced.count(storage.segment.stat().st_ino) == 1
+    with storage.segment.open("ab") as stream:
+        stream.write(b'{"offset":3')
+    storage.close()
+    resumed = CaptureStorage(tmp_path)
+    state = resumed.reserve(request(tmp_path))
+    assert state["count"] == 3
+    assert state["next_offset"] == 3
+    assert resumed.segment.read_bytes().endswith(b"\n")
+    resumed.close()
+
+
+@pytest.mark.parametrize("explicit_end", [None, 4])
+def test_completed_capture_is_verified_without_manifest_mutation(tmp_path: Path, explicit_end) -> None:
+    storage = CaptureStorage(tmp_path)
+    original = capture_events(request(tmp_path), FakeSource(), storage)
+    manifest_path = storage.directory / "manifest.json"
+    before = manifest_path.read_bytes()
+    before_stat = manifest_path.stat()
+    # Completed replay reads its durable range even after broker retention advances.
+    result = capture_events(request(tmp_path, explicit_end), FakeSource(low=4, high=8),
+                            CaptureStorage(tmp_path))
+    assert result == original
+    assert manifest_path.read_bytes() == before
+    assert manifest_path.stat().st_mtime_ns == before_stat.st_mtime_ns
+    assert manifest_path.stat().st_ino == before_stat.st_ino
+
+
+def test_completed_capture_corruption_is_rejected_without_rewriting_manifest(tmp_path: Path) -> None:
+    storage = CaptureStorage(tmp_path)
+    capture_events(request(tmp_path), FakeSource(), storage)
+    manifest_path = storage.directory / "manifest.json"
+    before = manifest_path.read_bytes()
+    with storage.segment.open("ab") as stream:
+        stream.write(b"{}\n")
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        capture_events(request(tmp_path), FakeSource(), CaptureStorage(tmp_path))
+    assert manifest_path.read_bytes() == before
+
+
+def test_interrupted_capture_with_full_durable_range_still_completes(tmp_path: Path) -> None:
+    storage = CaptureStorage(tmp_path)
+    storage.reserve(request(tmp_path))
+    FakeSource().capture(0, 4, storage.append)
+    storage.close()
+    pending = json.loads((storage.directory / "manifest.json").read_text())
+    assert pending["status"] == "capturing"
+    result = capture_events(request(tmp_path), FakeSource(), CaptureStorage(tmp_path))
+    assert result["status"] == "completed"
+    assert result["count"] == 4
+
+
+@pytest.mark.parametrize("response", [None, [], "ok", [object()],
+    [__import__('confluent_kafka').TopicPartition('wrong', 0, 3)],
+    [__import__('confluent_kafka').TopicPartition('events', 1, 3)],
+    [__import__('confluent_kafka').TopicPartition('events', 0, 2)]])
+def test_commit_requires_exact_partition_confirmation(response) -> None:
+    """Malformed or unrelated broker acknowledgements never advance manifest."""
+    from unittest.mock import Mock
+    from pixguard_ai.infrastructure.kafka.capture import KafkaCaptureSource
+
+    source = KafkaCaptureSource.__new__(KafkaCaptureSource)
+    source.topic, source.partition = "events", 0
+    source._consumer = Mock()
+    source._consumer.commit.return_value = response
+    message = Mock()
+    message.offset.return_value = 2
+    writer = Mock()
+    with pytest.raises(RuntimeError):
+        source._confirm(message, writer)
+    writer.confirmed.assert_not_called()
+
+
+def test_contended_lock_cleanup_does_not_mask_error(tmp_path: Path) -> None:
+    """A failed reservation releases its descriptor without touching its owner."""
+    owner = CaptureStorage(tmp_path)
+    owner.reserve(request(tmp_path))
+    contender = CaptureStorage(tmp_path)
+    try:
+        with pytest.raises(FileExistsError, match="already active"):
+            capture_events(request(tmp_path), FakeSource(), contender)
+        contender.close()
+    finally:
+        owner.close()
+    contender.reserve(request(tmp_path))
+    contender.close()
+
+
+def test_resume_rejects_modified_durable_record(tmp_path: Path) -> None:
+    """An interrupted segment must retain its original record checksums."""
+    storage = CaptureStorage(tmp_path)
+    storage.reserve(request(tmp_path))
+    FakeSource().capture(0, 4, storage.append)
+    storage.close()
+    lines = storage.segment.read_text().splitlines()
+    record = json.loads(lines[0])
+    record["timestamp"] += 1
+    lines[0] = json.dumps(record)
+    storage.segment.write_text("\n".join(lines) + "\n")
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        capture_events(request(tmp_path), FakeSource(), CaptureStorage(tmp_path))

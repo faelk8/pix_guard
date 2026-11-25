@@ -2,7 +2,13 @@
 
 Este guia mostra como gerar dados fictícios, processá-los na FASE 3, avaliar uma regra fixa e interpretar o painel.
 Não é preciso conhecer Spark ou métricas de classificação para acompanhar os conceitos. A FASE 4 é offline: ela
-lê uma tabela Silver já produzida e não consome mensagens Kafka.
+lê uma tabela Silver já produzida e não consome mensagens Kafka. Os comandos e resultados deste guia
+preservam a avaliação offline original, feita a partir do JSONL do gerador.
+
+A **FASE 2 está implementada** e a integração posterior da **FASE 5** publica o lote no Kafka, captura uma
+faixa finita de offsets e exporta um snapshot JSONL. O Spark processa esse arquivo em lote e produz uma Silver
+que pode ser avaliada pela mesma regra. Consulte o {doc}`guia da FASE 5 <integracao-fase-5>` para esse percurso
+e sua comparação com o caminho offline.
 
 > **Limite do laboratório:** todos os dados e rótulos são sintéticos. A regra usa a mesma separação de valores
 > construída pelo gerador; resultados perfeitos aqui não demonstram que o sistema encontra fraude real.
@@ -150,8 +156,10 @@ renderizar; a CLI Spark é um processo separado do profile `pipeline`.
   e R$ 2.000,00. A regra observa justamente esse valor. A separação artificial explica as métricas perfeitas.
 * Não houve teste cego, treinamento, ajuste de threshold nem validação com transações reais. Repetir o mesmo
   simulador comprova reprodução, não generalização.
-* O pipeline continua offline e lê JSONL; esta fase não liga o gerador ao Kafka. Kafka/streaming é trabalho
-  futuro da FASE 2.
+* A avaliação original descrita aqui é offline. A FASE 2 implementou publicação, captura e exportação Kafka;
+  a FASE 5 integrou esse transporte usando snapshots finitos em JSONL para Spark em lote. Essa integração não
+  estabelece streaming contínuo nem semântica *exactly-once* de ponta a ponta; veja o
+  {doc}`guia da FASE 5 <integracao-fase-5>`.
 * Nenhum modelo de ML foi criado. ML só fará sentido após hipótese e dados adequados, decisão de arquitetura e
   avaliação separada sem reaproveitar o conjunto de teste para ajustar a regra.
 * A ADR 0005 permanece `proposed`. Os valores acima descrevem a configuração executada, não uma aprovação

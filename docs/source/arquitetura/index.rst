@@ -5,7 +5,13 @@ PixGuard AI é um laboratório para estudar dados, mensageria e processamento. A
 JSONL, acompanha o manifesto do gerador e disponibiliza uma interface para explorar Kafka. A FASE 3 acrescenta
 um pipeline offline que lê o JSONL com Spark Declarative Pipelines (SDP), materializa Bronze/Silver/Gold em
 Parquet no volume Docker. A FASE 4 avalia uma regra fixa sobre a Silver e alimenta outra seção do dashboard.
-O gerador e o broker continuam sem ligação automática; streaming Kafka é a FASE 2 planejada.
+A **FASE 2 está implementada**: comandos separados publicam o lote JSONL no Kafka, capturam uma faixa finita de
+offsets e exportam um snapshot JSONL. Gerar o lote não inicia a publicação automaticamente.
+
+A FASE 5 integrou esse transporte ao Spark em lote e ao dashboard, comparando o snapshot vindo do Kafka com o
+JSONL original. O caminho offline continua disponível. O :doc:`guia da FASE 5 <../guia/integracao-fase-5>`
+explica a execução validada com 100.000 eventos e seus limites: não demonstra streaming contínuo, semântica
+*exactly-once* de ponta a ponta nem eficácia antifraude real.
 
 Fluxo principal
 ---------------
@@ -15,14 +21,25 @@ Fluxo principal
    flowchart LR
      subgraph compose[Docker Compose]
        GEN[Gerador FASE 1] --> JSONL[events.jsonl · volume]
-       JSONL --> SDP[Spark SDP · FASE 3 offline]
+       JSONL -->|caminho offline| SDP[Spark SDP · FASE 3 em lote]
+       JSONL --> PUB[Publicador · FASE 2]
+       PUB --> K[Kafka local]
+       K --> CAP[Captura · faixa finita de offsets]
+       CAP --> EXP[Exportador]
+       EXP --> SNAP[Snapshot JSONL · volume]
+       SNAP -->|integração FASE 5| SDP
+       K --> CONSOLE[Redpanda Console]
+       PUB --> TM[Manifestos de transporte]
+       CAP --> TM
+       EXP --> TM
+       TM --> DASH[Dashboard]
        SDP --> B[Bronze · JSON bruto]
        B --> S[Silver · validado e único]
        S --> G[Gold · agregados Decimal]
        S --> Q[Quarentena · inválidos/conflitos]
        SDP --> M[Manifesto e resumo top-20]
        G --> PARQ[Parquet no volume]
-       M --> DASH[Dashboard]
+       M --> DASH
        PARQ -. consultável .-> DASH
        S --> SCORE[Regra fixa FASE 4]
        SCORE --> PRED[Predições sem rótulo]
@@ -30,15 +47,19 @@ Fluxo principal
        GT[ground_truth · avaliação] --> JOIN
        JOIN --> EVAL[Métricas e manifesto FASE 4]
        EVAL --> DASH
-       K[Kafka local · broker disponível] --> CONSOLE[Redpanda Console]
-       DEMO[Mensagem manual de demonstração] --> K
      end
-       GEN -. publicação automática futura .-> K
 
 Docker é o padrão de container: cada serviço fica isolado e tem suas dependências. Docker Compose descreve os
 serviços, rede, portas e volumes. Kafka é um sistema de mensagens que permite a serviços diferentes trocarem
 eventos. Redpanda Console é uma aplicação web compatível com o protocolo Kafka e torna os tópicos e mensagens
 visíveis no navegador.
+
+A publicação confirma entregas ao broker; a captura persiste registros de uma faixa de offsets com fim
+exclusivo. O exportador valida essa captura e produz o snapshot JSONL para processamento. O Spark não consome
+Kafka diretamente: ele recebe um arquivo finito, seja o original do gerador, seja o snapshot exportado.
+Na FASE 5, os dois caminhos produziram 100.000 eventos Silver, 3.269 grupos Gold e a mesma soma Decimal de
+R$ 245.449.133,57, conforme a execução documentada no :doc:`guia da integração <../guia/integracao-fase-5>`.
+Esses valores são evidência do lote sintético observado, não uma garantia para outros dados.
 
 O arquivo ``events.jsonl`` é JSON Lines: cada linha contém um evento JSON independente. Isso permite ao Spark
 ler um conjunto grande sem carregar o arquivo inteiro para a memória do processo driver. O perfil Compose

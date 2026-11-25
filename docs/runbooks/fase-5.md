@@ -24,6 +24,7 @@ offline_run=phase5-offline-001
 kafka_run=phase5-kafka-001
 analysis_a=phase5-analysis-001
 analysis_b=phase5-analysis-002
+kafka_repeat_run=phase5-kafka-002
 data=/data/pixguard
 original=$data/events.jsonl
 exported=$data/captures/$capture/snapshots/$snapshot/events.jsonl
@@ -78,25 +79,27 @@ docker compose --profile pipeline run --rm --no-deps pipeline pixguard-pipeline 
   --input "$original" --run-id "$offline_run"
 docker compose --profile pipeline run --rm --no-deps pipeline pixguard-pipeline process \
   --input "$exported" --run-id "$kafka_run"
+docker compose --profile pipeline run --rm --no-deps pipeline pixguard-pipeline process \
+  --input "$exported" --run-id "$kafka_repeat_run"
 ```
 
 Cada run congela a entrada, calcula o SHA-256 e publica seu manifesto em `runs/<run_id>/manifest.json`.
 O `input.sha256` do run Kafka deve corresponder a `events_sha256` do snapshot. O do run offline
 deve corresponder a `source_sha256` da publicação. Na execução de referência o run Kafka levou 67,416 s.
 
-| Resultado | Via Kafka | Offline |
-|---|---:|---:|
-| Bronze / Silver | 100.000 / 100.000 | 100.000 / 100.000 |
-| Duplicatas removidas / quarentena | 0 / 0 | 0 / 0 |
-| Grupos Gold | 3.269 | 3.269 |
-| Soma BRL (Decimal) | 245449133.57 | 245449133.57 |
-| Reconciliação | aprovada | aprovada |
+| Resultado | Kafka, primeira execução | Kafka, reexecução | Offline |
+|---|---:|---:|---:|
+| Bronze / Silver | 100.000 / 100.000 | 100.000 / 100.000 | 100.000 / 100.000 |
+| Duplicatas removidas / quarentena | 0 / 0 | 0 / 0 | 0 / 0 |
+| Grupos Gold | 3.269 | 3.269 | 3.269 |
+| Soma BRL (Decimal) | 245449133.57 | 245449133.57 | 245449133.57 |
+| Reconciliação | aprovada | aprovada | aprovada |
 
 Em um terceiro container, leia os manifestos e os Parquet Gold completos. A consulta abaixo verifica os
 totais de eventos e de BRL de cada execução, conta os grupos e procura diferenças por grupo nos dois sentidos.
 
 ```bash
-docker compose --profile pipeline run --rm -T --no-deps pipeline python - "$offline_run" "$kafka_run" <<'PY'
+docker compose --profile pipeline run --rm -T --no-deps pipeline python - "$offline_run" "$kafka_run" "$kafka_repeat_run" <<'PY'
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -117,9 +120,9 @@ try:
         assert (groups, events, amount) == (3269, 100000, Decimal("245449133.57"))
         print(run_id, groups, events, amount)
         tables.append(gold)
-    left, right = tables
-    assert not left.exceptAll(right).take(1) and not right.exceptAll(left).take(1)
-    print("Gold equivalente em todos os grupos")
+    for left, right in zip(tables, tables[1:]):
+        assert not left.exceptAll(right).take(1) and not right.exceptAll(left).take(1)
+    print("Gold equivalente entre caminhos e reexecução")
 finally:
     spark.stop()
 PY
@@ -152,6 +155,51 @@ O endpoint de saúde deve responder `ok`. Abra a porta local publicada pelo Comp
 confira os IDs exibidos e as contagens acima. Na validação de referência o serviço estava saudável em
 [127.0.0.1:8501](http://127.0.0.1:8501).
 
+## Replay da faixa e recuperação de interrupções
+
+O replay Kafka é uma nova leitura da mesma faixa de offsets; ele não republica os eventos. Com a publicação
+original ainda no broker, capture a faixa em um ID novo e confira a exportação contra a origem:
+
+```bash
+replay_capture=phase5-replay-001
+replay_snapshot=phase5-replay-001
+docker compose run --rm --no-deps app pixguard capture --capture-id "$replay_capture" \
+  --topic "$PIXGUARD_KAFKA_TOPIC" --partition 0 --start 0 --end 100000
+docker compose run --rm --no-deps app pixguard export-capture \
+  --capture-id "$replay_capture" --snapshot-id "$replay_snapshot"
+docker compose run --rm --no-deps app python tests/integration/streaming/acceptance/verify_batch.py \
+  --source "$original" --capture "$data/captures/$replay_capture" \
+  --snapshot "$data/captures/$replay_capture/snapshots/$replay_snapshot" \
+  --expected-count 100000 --expected-physical 100000
+```
+
+Na repetição observada, a captura leu novamente offsets 0–99.999 sem republicação. O exportador registrou
+100.000 posições físicas, 100.000 eventos exportados e zero duplicatas/quarentenas. O verificador retornou
+`status=verified`, `physical_count=100000`, `exported_count=100000`, `events_sha256` igual ao snapshot original
+(`e3121462...`) e `canonical_multiset_sha256=cc1fab73...`. A reexecução Spark do mesmo snapshot em `phase5-kafka-002`
+terminou com os mesmos 3.269 grupos, 100.000 eventos, BRL 245449133.57 e zero diferenças Gold nos dois sentidos
+contra `phase5-kafka-001`.
+
+A recuperação de interrupção foi exercitada em um broker temporário e volumes separados, usando o aceite
+integrado da FASE 2:
+
+```bash
+export PIXGUARD_ACCEPTANCE_PROJECT=pixguard-phase5-acceptance
+bash tests/integration/streaming/acceptance/run.sh
+docker compose -p "$PIXGUARD_ACCEPTANCE_PROJECT" \
+  -f docker-compose.yml -f tests/integration/streaming/acceptance/compose.yaml down
+unset PIXGUARD_ACCEPTANCE_PROJECT
+```
+
+O comando passou em **8 testes**. Quatro cenários injetaram erro antes de `fsync`, depois de `fsync`, depois do
+commit Kafka e falta de espaço; cada captura foi retomada com o mesmo ID e terminou com 15 posições, 10 eventos
+exportados, 1 duplicata equivalente, 3 registros em quarentena de contrato e 1 quarentena de transporte.
+O teste também confirmou que offset já expirado e broker indisponível não produzem captura concluída. Esses
+casos exercitam falhas de armazenamento/commit controladas; não simulam encerramento abrupto da máquina nem
+garantem recuperação após qualquer tipo de corrupção externa.
+O `down` acima remove os containers e a rede do projeto de aceite, mas preserva os volumes; use outro nome
+de projeto para um teste totalmente novo e não rode `down -v` se quiser manter os artefatos.
+
 ## Recuperar uma execução
 
 | Sintoma | Verificação e ação |
@@ -163,8 +211,8 @@ confira os IDs exibidos e as contagens acima. Na validação de referência o se
 | Dashboard sem resultados | Confirme o projeto Compose, o volume, o estado `completed` dos manifestos e os IDs exibidos. O painel usa resumos persistidos por execução. |
 | Volume sem espaço ou permissão | Confira `docker compose run --rm --no-deps app pixguard check-storage` e `docker compose run --rm --no-deps app df -h /data/pixguard`. O usuário das imagens app e pipeline tem UID 10001. |
 
-O broker local tem uma réplica. O Spark recebe um lote finito em JSONL. O teste cobre essa configuração
-e esse intervalo de offsets. Garantias de alta disponibilidade, streaming contínuo e semântica
+O broker local tem uma réplica. O Spark recebe um lote finito em JSONL. Os ensaios cobrem essa configuração
+e as falhas enumeradas acima. Garantias de alta disponibilidade, streaming contínuo e semântica
 *exactly-once* de ponta a ponta ficam fora do alcance do experimento.
 
 ## Encerrar

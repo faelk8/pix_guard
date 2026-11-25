@@ -257,9 +257,18 @@ do snapshot com 100.000 posições físicas. O Spark processou o snapshot em 67,
 | `phase5-offline-001` | 100.000 | 100.000 | 0 | 0 | 3.269 | 245449133.57 |
 
 A comparação independente confirmou contagens e soma Decimal iguais. A consulta de verificação
-também comparou as tabelas Gold completas nos dois sentidos, sem diferenças entre grupos. Os SHA-256 do arquivo gerado
-e do snapshot exportado diferem devido à serialização e à ordem das linhas. Os hashes dos três
-artefatos estão no [runbook](runbooks/fase-5.md).
+também comparou as tabelas Gold completas nos dois sentidos, sem diferenças entre grupos. Reexecutar o
+mesmo snapshot em `phase5-kafka-002` levou 72,593 s e produziu os mesmos 3.269 grupos, 100.000 eventos e
+245449133.57 BRL, com zero diferenças Gold contra a execução inicial. Um replay separado dos mesmos offsets
+0–99.999 exportou 100.000 registros, zero duplicatas/quarentenas e passou no verificador (`status=verified`,
+hash multiconjunto canônico igual). Os SHA-256 do arquivo gerado e do snapshot exportado diferem devido à
+serialização e à ordem das linhas. Os hashes dos artefatos estão no [runbook](runbooks/fase-5.md).
+
+O aceite de recuperação passou em 8 testes num broker/volume isolados. Falhas injetadas antes e depois de
+`fsync`, depois do commit Kafka e por falta de espaço foram retomadas com o mesmo ID; fixture final teve 15
+posições físicas, 10 eventos exportados, uma duplicata, três quarentenas de contrato e uma de transporte.
+Offset expirado e broker indisponível não produziram captura concluída. Os testes cobrem falhas controladas,
+não interrupção abrupta da máquina nem alta disponibilidade.
 
 As avaliações `phase5-analysis-001` e `phase5-analysis-002` leram a mesma Silver da execução Kafka.
 Cada uma registrou 5.008 verdadeiros positivos, 94.992 verdadeiros negativos e zero falsos positivos

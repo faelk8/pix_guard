@@ -21,7 +21,8 @@ Na FASE 5, tanto a entrada via Kafka quanto a offline produziram 100.000 eventos
 a soma de R$ 245.449.133,57. Duas avaliações sobre a mesma Silver reproduziram a classificação do simulador.
 O experimento é local, trabalha com snapshots finitos e não estabelece processamento contínuo nem garantia
 de entrega exatamente uma vez. As métricas descrevem exclusivamente dados sintéticos.
-[Reproduzir a FASE 5 em Docker](docs/runbooks/fase-5.md).
+[Estudar a integração final — guia Sphinx da FASE 5](docs/source/guia/integracao-fase-5.md)
+e [reproduzir a FASE 5 em Docker](docs/runbooks/fase-5.md).
 
 ## Processar o lote da FASE 3
 

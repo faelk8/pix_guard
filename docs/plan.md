@@ -1,8 +1,8 @@
 # Plano do PixGuard AI
 
-**Estado:** FASES 0, 1, 3 e 4 integradas e validadas em containers. A FASE 2 de transporte Kafka está em
-planejamento: a direção de captura em snapshots foi aprovada, mas o fluxo produtivo e o lote de 100.000
-eventos via Kafka ainda não foram implementados nem validados.
+As FASES 0 a 4 estão integradas. A FASE 5 concluiu a validação ponta a ponta em Docker com 100.000
+eventos sintéticos, da publicação Kafka ao dashboard. Os comandos, resultados e instruções de recuperação
+estão no [runbook da FASE 5](runbooks/fase-5.md).
 
 ## Objetivo e escopo
 
@@ -20,22 +20,28 @@ podem contextualizar o projeto em gráficos separados.
 
 | Existe | Falta | Como comprovar |
 |---|---|---|
-| FASE 0 de arquitetura e FASE 1 de infraestrutura, gerador, painel e Redpanda Console | streaming Kafka segue planejado; a FASE 3 processa o JSONL offline | Issues #1–#14 e relatórios locais ignorados em `specs/` |
-| Gerador produz 100.000 eventos sintéticos versionados em JSONL | integração automática do gerador com Kafka | teste do gerador na Issue #2; FASE 2 ainda planejada |
-| Pipeline Spark SDP 4.3.0 no perfil Compose `pipeline` | Kafka streaming e garantias de entrega | dry-run, fixture, lote 100k e segunda execução na Issue #10 |
+| FASE 0 de arquitetura e FASE 1 de infraestrutura, gerador, painel e Redpanda Console | operação em produção fora do escopo | Issues #1–#14 e relatórios locais ignorados em `specs/` |
+| Gerador produz 100.000 eventos sintéticos versionados em JSONL | processamento contínuo fora do escopo | geração (#2), publicação e captura em snapshots (#37), aceite E2E (#39) |
+| Pipeline Spark SDP 4.3.0 no perfil Compose `pipeline` | leitura contínua do broker pelo Spark | dry-run, fixture, lote 100k e segunda execução na Issue #10 |
 | Bronze, Silver, quarentena, Gold, manifesto e resumo dashboard em volume Docker | política de retenção/limpeza de execuções | outputs sob `runs/<run_id>` e leitores em container |
-| Dashboard mostra o manifesto concluído mais recente e resumo Gold | painel Kafka/streaming integrado | testes e resposta HTTP local da Issue #11 |
+| Dashboard mostra resumos de transporte, Gold e avaliação | monitoramento de produção | painel local e manifestos da FASE 5 (#39) |
 | Baseline fixa, avaliação de 100 mil registros e métricas no dashboard | ML e dados representativos de fraude real | relatórios locais das Issues #16–#18; runs imutáveis `eval-003` e `eval-004` |
 | Estatísticas agregadas do Banco Central como fonte opcional futura | verificar utilidade, fonte, licença e formato antes de qualquer uso | não são requisito para o fluxo sintético offline |
 
-## Arquitetura proposta
+## Arquitetura executada
 
 ```mermaid
 flowchart LR
   subgraph Compose[Docker Compose]
     GEN[Gerador FASE 1] --> JSONL[events.jsonl · volume pixguard_data]
-    JSONL --> DRY[CLI Spark SDP · dry-run]
-    DRY --> RUN[CLI Spark SDP · run por run_id]
+    JSONL --> RUN[CLI Spark SDP · lote por run_id]
+    JSONL --> PUB[Publicação]
+    PUB --> K[Kafka]
+    K --> CAP[Captura de offsets]
+    CAP --> SNAP[Snapshot JSONL]
+    SNAP --> RUN
+    CAP --> DASH
+    CON[Redpanda Console] --- K
     RUN --> B[Bronze · JSON bruto e proveniência]
     B --> S[Silver · contrato, UTC, Decimal e deduplicação]
     S --> Q[Quarentena · inválidos e IDs conflitantes]
@@ -51,14 +57,11 @@ flowchart LR
     JOIN --> METRICS[Métricas e resumo FASE 4]
     METRICS --> DASH
   end
-  K[Kafka local · disponível] -. streaming FASE 2 futuro .-> JSONL
-  CON[Redpanda Console] --- K
 ```
 
 O `docker-compose.yml` contém `kafka`, `app`, `dashboard` e `pipeline`; o Spark é opt-in pelo perfil `pipeline`.
-Um volume Docker nomeado em `/data/pixguard` mantém o JSONL, os Parquet e os manifestos. O fluxo de processamento
-da FASE 3 começa no arquivo da FASE 1 e não lê Kafka. Kafka e Redpanda Console continuam disponíveis para
-inspeção manual, mas o gerador ainda não publica no broker.
+Um volume Docker nomeado em `/data/pixguard` mantém o JSONL, os Parquet e os manifestos. A FASE 3 aceita tanto o arquivo da FASE 1 como o snapshot da FASE 2.
+O publicador e a captura acessam o broker pela rede interna. O Console permite inspecionar a partição.
 
 O runtime Spark é uma imagem separada com Python 3.12, Java 17 e PySpark com SDP 4.3.0. Cada `run_id` cria um
 diretório e warehouse isolados; o dashboard escolhe o manifesto concluído válido com `finished_at` UTC mais
@@ -83,8 +86,7 @@ Docker host, não distribuída nem de alta disponibilidade.
 
 O dashboard lê o estado persistido pelo gerador e distingue uma execução concluída de estados vazios ou com erro.
 Na FASE 3, também mostra contagens, resumo Gold e alertas de execução falha. Na FASE 4, o dashboard valida
-manifesto e hashes e mostra matriz de confusão, métricas, baseline negativa e exemplos limitados. Gráficos de
-streaming só entram depois de existir uma fonte Kafka/streaming validada.
+manifesto e hashes e mostra matriz de confusão, métricas, baseline negativa e exemplos limitados. A seção de transporte mostra o intervalo de offsets e a reconciliação da exportação.
 
 ## Contrato e segurança de dados
 
@@ -109,8 +111,8 @@ não produz alertas nem usa `ground_truth` na agregação.
 | Componente | Configuração desta entrega | Evidência e limite |
 |---|---|---|
 | Python | aplicação em `python:3.12.12-slim-bookworm`; pipeline em `python:3.12-slim-bookworm` | builds e testes executados em containers; a tag da pipeline não fixa patch/digest |
-| Java e Spark SDP | OpenJDK 17 e `pyspark[pipelines]==4.3.0` no lockfile | dry-run, materialização e consulta Parquet comprovados; conector Kafka ainda não validado |
-| Kafka e Redpanda Console | `apache/kafka:4.4.0` e Console `v3.14.0` no Compose | infraestrutura entregue na PR #8; publicação/consumo automáticos, replay e atraso seguem na FASE 2 |
+| Java e Spark SDP | OpenJDK 17 e `pyspark[pipelines]==4.3.0` no lockfile | dry-run, materialização e consulta Parquet comprovados; entrada em lote por JSONL |
+| Kafka e Redpanda Console | `apache/kafka:4.4.0` e Console `v3.14.0` no Compose | broker e Console na PR #8, aceite da captura em snapshots na PR #38 |
 | Filesystem Docker | volume nomeado em `/data/pixguard` | arquivos consultados em containers novos; retenção e backup permanecem responsabilidades locais |
 | Docker Compose | serviços Kafka, Console, app, pipeline e dashboard | configuração e healthchecks validados; Spark usa perfil `pipeline` com 2 CPUs e 4 GiB |
 
@@ -124,12 +126,12 @@ medir o consumo e ajustar esses limites antes de aumentar o volume de dados.
 
 A tela mostra progresso real do gerador, totais, estado e um aviso permanente de dados sintéticos. A seção
 FASE 3 apresenta contagens reconciliadas e até vinte grupos Gold. Estados vazios, falhos e inválidos têm
-mensagens próprias. Saúde do streaming e alertas analíticos dependem de entregas posteriores.
+mensagens próprias. O painel de transporte exibe a posição registrada no manifesto da captura.
 
 ## Riscos e decisões
 
-- Spark SDP 4.3.0, Java 17 e Python 3.12 foram comprovados no fluxo offline. A compatibilidade do conector
-  Kafka e o comportamento de streaming ainda exigem uma PoC própria da FASE 2.
+- Spark SDP 4.3.0, Java 17 e Python 3.12 foram comprovados no fluxo offline. O transporte Kafka usa o cliente Python e termina no snapshot.
+  Uma integração contínua com Spark exigiria outra arquitetura.
 - Fontes externas podem mudar formato, licença ou disponibilidade. Mitigação: manter BCB opcional e verificar as
   condições antes de qualquer integração.
 - Volume compartilhado é local ao Docker host e precisa de espaço, permissões e backup explícitos; não é storage
@@ -144,7 +146,7 @@ mensagens próprias. Saúde do streaming e alertas analíticos dependem de entre
 ADRs registrados incluem armazenamento em volume Docker local, execução em containers, dados sintéticos
 reproduzíveis e execução Spark por `run_id`. A ADR 0005 da baseline permanece proposta; a implementação dos
 defaults didáticos não equivale a aprovação de política. A decisão de quarentenar todos os IDs conflitantes foi
-confirmada por Rafael. Streaming, checkpoints e qualquer hipótese de modelo exigem decisões e validações próprias.
+confirmada por Rafael. A ADR 0006 descreve a captura por faixa e a ADR 0007 registra a escolha do cliente Kafka.
 
 ## Backlog por fases
 
@@ -156,11 +158,11 @@ documentação são organizadas em Pull Requests vinculadas às Issues e validad
 1. FASE 0: auditoria e plano local (concluída).
 2. Fundamental: consolidar requisitos/arquitetura (`PLAN-001`, Issue #4; concluída).
 3. FASE 1: Compose base (`INFRA-001`, Issue #1), contrato/gerador de 100 mil eventos (`GEN-001`, Issue #2), dashboard (`UI-001`, Issue #3) e Redpanda Console para inspeção visual do broker (`INFRA-002`, Issue #6).
-4. FASE 2: planejar e integrar publicação/captura Kafka, snapshots, replay, idempotência, atraso/quarentena e painel de transporte; PLAN-004 / Issue #23 registra a arquitetura aprovada para começar. Broker e Console já existem na infraestrutura da PR #8.
+4. FASE 2: publicação, captura Kafka por faixa de offsets, exportação e painel de transporte integrados. PLAN-004 (#23) registra a arquitetura. STREAM-007 (#37, PR #38) encerra a validação da fase.
 5. FASE 3: processamento SDP offline, Bronze/Silver/Gold, consulta visual e execução reproduzível.
 6. FASE 4: baseline fixa, avaliação, painel e documentação (`RULE-001` #16, `ANALYSIS-001` #17,
    `UI-003` #18 e `DOCS-003` #19); o artigo `ARTICLE-002` #20 é preparado localmente. Comparação ML somente se justificada.
-7. FASE 5: hardening, execução E2E totalmente em Docker, README/runbook e série editorial final.
+7. FASE 5: validação ponta a ponta em Docker concluída, com comparação offline e roteiro reproduzível (INTEGRATION-001, #39).
 
 Cada fase terá Issue, critérios, validação executada em containers, evidências e um artigo próprio. Os artigos
 conectam as etapas e incluem somente resultados já verificados.
@@ -242,6 +244,37 @@ Consulte [o guia de análise](source/guia/analise-fase-4.md) para termos e coman
 Kafka streaming não está envolvido, ML não foi desenvolvido e não houve avaliação cega nem dados reais. A ADR
 0005 permanece `proposed`: os defaults executados são configuração observada para estudo, não decisão de produto
 ou aprovação formal de Rafael.
+
+## FASE 5 — Resultados da integração
+
+O publicador confirmou 100.000 eventos no tópico `pixguard.payment_event_v1`. A captura
+`phase5-001` fechou a faixa [0, 100000) da partição 0. O exportador reconciliou 100.000 linhas
+do snapshot com 100.000 posições físicas. O Spark processou o snapshot em 67,416 s neste ambiente.
+
+| Execução | Bronze | Silver | Duplicatas | Quarentena | Grupos Gold | Soma BRL |
+|---|---:|---:|---:|---:|---:|---:|
+| `phase5-kafka-001` | 100.000 | 100.000 | 0 | 0 | 3.269 | 245449133.57 |
+| `phase5-offline-001` | 100.000 | 100.000 | 0 | 0 | 3.269 | 245449133.57 |
+
+A comparação independente confirmou contagens e soma Decimal iguais. A consulta de verificação
+também comparou as tabelas Gold completas nos dois sentidos, sem diferenças entre grupos. Reexecutar o
+mesmo snapshot em `phase5-kafka-002` levou 72,593 s e produziu os mesmos 3.269 grupos, 100.000 eventos e
+245449133.57 BRL, com zero diferenças Gold contra a execução inicial. Um replay separado dos mesmos offsets
+0–99.999 exportou 100.000 registros, zero duplicatas/quarentenas e passou no verificador (`status=verified`,
+hash multiconjunto canônico igual). Os SHA-256 do arquivo gerado e do snapshot exportado diferem devido à
+serialização e à ordem das linhas. Os hashes dos artefatos estão no [runbook](runbooks/fase-5.md).
+
+O aceite de recuperação passou em 8 testes num broker/volume isolados. Falhas injetadas antes e depois de
+`fsync`, depois do commit Kafka e por falta de espaço foram retomadas com o mesmo ID; fixture final teve 15
+posições físicas, 10 eventos exportados, uma duplicata, três quarentenas de contrato e uma de transporte.
+Offset expirado e broker indisponível não produziram captura concluída. Os testes cobrem falhas controladas,
+não interrupção abrupta da máquina nem alta disponibilidade.
+
+As avaliações `phase5-analysis-001` e `phase5-analysis-002` leram a mesma Silver da execução Kafka.
+Cada uma registrou 5.008 verdadeiros positivos, 94.992 verdadeiros negativos e zero falsos positivos
+ou negativos. A comparação retornou `equivalent=true` e o dashboard respondeu em `127.0.0.1:8501`.
+Os números medem conformidade com a regra do simulador. A execução em lote, em um único host, deixa
+fora do escopo streaming contínuo, exatamente uma vez de ponta a ponta e eficácia contra fraude real.
 
 ## Resultado da FASE 0
 

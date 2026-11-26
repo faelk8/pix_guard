@@ -156,10 +156,16 @@ levaram 59,782 s e 60,698 s, com limites Compose de 2 CPUs e 4 GiB para o pipeli
 
 ## Entender fases e limitações
 
-Kafka e Redpanda Console ainda aparecem no Compose para as experiências de mensageria da FASE 2, mas o gerador
-não publica neles automaticamente. A FASE 3 abre diretamente `events.jsonl`; a FASE 2, streaming, checkpoints
-de Kafka e garantias de processamento ponta a ponta permanecem pendentes. A FASE 4 sobre regras ou ML também não
-está incluída aqui.
+A FASE 3 continua offline: abre um arquivo JSONL e materializa as camadas em lote. A **FASE 2 está
+implementada**, com comandos explícitos para publicar o lote no Kafka, capturar uma faixa finita de offsets e
+exportar um snapshot JSONL. O comando `pixguard generate` grava o arquivo e não inicia a publicação sozinho.
+
+A **FASE 5 integrou** esse transporte ao processamento Spark e comparou o snapshot exportado com o JSONL
+original. O Spark continua lendo arquivos finitos, sem consumir Kafka diretamente. Consulte o
+{doc}`guia da FASE 5 <integracao-fase-5>` para executar esse caminho e conferir suas evidências. A integração
+não estabelece Spark contínuo, semântica *exactly-once* de ponta a ponta nem eficácia antifraude real.
+A regra fixa e a avaliação posterior da Silver estão no {doc}`guia da FASE 4 <analise-fase-4>`; não há modelo
+de ML implementado.
 
 Para rastrear o trabalho: pipeline e contrato de saída foram implementados na Issue #10; a leitura visual está
 na Issue #11; a proposta de warehouse por execução e o registro da regra de conflito estão na ADR 0004 / Issue #14.
